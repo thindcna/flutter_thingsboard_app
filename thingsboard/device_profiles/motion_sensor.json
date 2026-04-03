@@ -1,0 +1,21 @@
+{
+  "name": "SmartHome Motion Sensor",
+  "type": "DEFAULT",
+  "transportType": "DEFAULT",
+  "provisionType": "DISABLED",
+  "description": "Profile cho cam bien chuyen dong. Phat hien chuyen dong, do sang, battery.",
+  "default": false,
+  "profileData": {
+    "configuration": {
+      "type": "DEFAULT"
+    },
+    "transportConfiguration": {
+      "type": "DEFAULT"
+    },
+    "alarms": null,
+    "provisionConfiguration": {
+      "type": "DISABLED",
+      "provisionDeviceSecret": null
+    }
+  }
+}

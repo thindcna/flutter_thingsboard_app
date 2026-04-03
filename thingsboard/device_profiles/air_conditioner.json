@@ -1,0 +1,21 @@
+{
+  "name": "SmartHome Air Conditioner",
+  "type": "DEFAULT",
+  "transportType": "DEFAULT",
+  "provisionType": "DISABLED",
+  "description": "Profile cho dieu hoa thong minh. Ho tro: on/off, temperature, mode (cool/heat/auto/dry/fan), fan speed, swing.",
+  "default": false,
+  "profileData": {
+    "configuration": {
+      "type": "DEFAULT"
+    },
+    "transportConfiguration": {
+      "type": "DEFAULT"
+    },
+    "alarms": null,
+    "provisionConfiguration": {
+      "type": "DISABLED",
+      "provisionDeviceSecret": null
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "SmartHome Room",
+  "description": "Profile cho 'Phong' trong he thong SmartHome. Moi Room thuoc 1 Home (relation Contains tu Home). Room chua cac Device (relation Contains).",
+  "defaultRuleChainId": null,
+  "defaultDashboardId": null,
+  "defaultEdgeRuleChainId": null,
+  "image": null,
+  "defaultQueueName": null
+}

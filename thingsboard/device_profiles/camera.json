@@ -1,0 +1,21 @@
+{
+  "name": "SmartHome Camera",
+  "type": "DEFAULT",
+  "transportType": "DEFAULT",
+  "provisionType": "DISABLED",
+  "description": "Profile cho camera an ninh. Ho tro: live stream, PTZ, snapshot, motion detection.",
+  "default": false,
+  "profileData": {
+    "configuration": {
+      "type": "DEFAULT"
+    },
+    "transportConfiguration": {
+      "type": "DEFAULT"
+    },
+    "alarms": null,
+    "provisionConfiguration": {
+      "type": "DISABLED",
+      "provisionDeviceSecret": null
+    }
+  }
+}

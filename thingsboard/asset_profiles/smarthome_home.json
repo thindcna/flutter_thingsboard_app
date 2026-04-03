@@ -1,0 +1,9 @@
+{
+  "name": "SmartHome Home",
+  "description": "Profile cho 'Nha' trong he thong SmartHome. Moi Customer co the co nhieu Home. Home chua cac Room (relation Contains) va luu tru scenes, automations, weather location.",
+  "defaultRuleChainId": null,
+  "defaultDashboardId": null,
+  "defaultEdgeRuleChainId": null,
+  "image": null,
+  "defaultQueueName": null
+}

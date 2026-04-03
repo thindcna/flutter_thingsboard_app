@@ -1,0 +1,21 @@
+{
+  "name": "SmartHome Door Window Sensor",
+  "type": "DEFAULT",
+  "transportType": "DEFAULT",
+  "provisionType": "DISABLED",
+  "description": "Profile cho cam bien cua. Phat hien mo/dong cua, battery level.",
+  "default": false,
+  "profileData": {
+    "configuration": {
+      "type": "DEFAULT"
+    },
+    "transportConfiguration": {
+      "type": "DEFAULT"
+    },
+    "alarms": null,
+    "provisionConfiguration": {
+      "type": "DISABLED",
+      "provisionDeviceSecret": null
+    }
+  }
+}

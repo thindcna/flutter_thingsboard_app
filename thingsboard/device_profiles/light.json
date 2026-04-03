@@ -1,0 +1,21 @@
+{
+  "name": "SmartHome Light",
+  "type": "DEFAULT",
+  "transportType": "DEFAULT",
+  "provisionType": "DISABLED",
+  "description": "Profile cho thiet bi den thong minh. Ho tro: on/off, brightness, color temperature, RGB color.",
+  "default": false,
+  "profileData": {
+    "configuration": {
+      "type": "DEFAULT"
+    },
+    "transportConfiguration": {
+      "type": "DEFAULT"
+    },
+    "alarms": null,
+    "provisionConfiguration": {
+      "type": "DISABLED",
+      "provisionDeviceSecret": null
+    }
+  }
+}

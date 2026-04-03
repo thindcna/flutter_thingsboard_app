@@ -1,0 +1,92 @@
+{
+  "ruleChain": {
+    "name": "SmartHome Scheduler Heartbeat",
+    "type": "CORE",
+    "debugMode": false,
+    "additionalInfo": {
+      "description": "Rule chain phu tro cho time-based automations. Tao 1 device type 'scheduler' gui heartbeat moi phut. Rule chain nay nhan heartbeat va chuyen sang Automation Engine de evaluate time-based rules. Cach dung: tao 1 device co type='scheduler', gui telemetry {heartbeat: true} moi 60 giay."
+    }
+  },
+  "metadata": {
+    "firstNodeIndex": 0,
+    "nodes": [
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode",
+        "name": "Message Type Filter",
+        "configuration": {},
+        "additionalInfo": {
+          "description": "Filter chi lay POST_TELEMETRY_REQUEST",
+          "layoutX": 100,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
+        "name": "Is Heartbeat?",
+        "configuration": {
+          "jsScript": "return msg.heartbeat === true || msg.heartbeat === 'true';"
+        },
+        "additionalInfo": {
+          "description": "Kiem tra message co phai heartbeat khong",
+          "layoutX": 350,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.metadata.TbGetCustomerAttributeNode",
+        "name": "Get Customer Homes",
+        "configuration": {
+          "attrMapping": {
+            "home_asset_ids": "homeAssetIds"
+          },
+          "telemetry": false
+        },
+        "additionalInfo": {
+          "description": "Lay danh sach Home Asset IDs tu Customer attribute. Customer can co server attribute 'home_asset_ids' la JSON array cac home asset ID.",
+          "layoutX": 600,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Generate Time Context",
+        "configuration": {
+          "jsScript": "// Tao message voi thong tin thoi gian hien tai\n// de Automation Engine co the evaluate time-based conditions\nvar now = new Date();\nvar timeContext = {\n    heartbeat: true,\n    current_hour: now.getHours(),\n    current_minute: now.getMinutes(),\n    current_day: now.getDay() === 0 ? 7 : now.getDay(),\n    timestamp: now.getTime()\n};\nreturn {msg: timeContext, metadata: metadata, msgType: 'POST_TELEMETRY_REQUEST'};"
+        },
+        "additionalInfo": {
+          "description": "Enrich heartbeat message voi time context de Automation Engine evaluate time-based rules",
+          "layoutX": 850,
+          "layoutY": 200
+        }
+      }
+    ],
+    "connections": [
+      {
+        "fromIndex": 0,
+        "toIndex": 1,
+        "type": "Post telemetry"
+      },
+      {
+        "fromIndex": 1,
+        "toIndex": 2,
+        "type": "True"
+      },
+      {
+        "fromIndex": 2,
+        "toIndex": 3,
+        "type": "Success"
+      }
+    ],
+    "ruleChainConnections": [
+      {
+        "fromIndex": 3,
+        "targetRuleChainId": null,
+        "additionalInfo": {
+          "description": "Chuyen sang SmartHome Automation Engine rule chain. Can set targetRuleChainId sau khi import.",
+          "ruleChainNodeName": "SmartHome Automation Engine"
+        },
+        "type": "Success"
+      }
+    ]
+  }
+}

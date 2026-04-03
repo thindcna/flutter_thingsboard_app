@@ -1,0 +1,393 @@
+{
+  "ruleChain": {
+    "name": "SmartHome Automation Engine",
+    "type": "CORE",
+    "firstRuleNodeId": null,
+    "debugMode": false,
+    "configuration": null,
+    "additionalInfo": {
+      "description": "Rule chain xử lý automation rules cho SmartHome. Lắng nghe telemetry từ devices, đọc automation rules từ Home Asset attribute, evaluate conditions và execute actions (RPC to devices)."
+    }
+  },
+  "metadata": {
+    "firstNodeIndex": 0,
+    "nodes": [
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode",
+        "name": "Message Type Switch",
+        "configuration": {
+          "version": 0
+        },
+        "additionalInfo": {
+          "description": "Phân loại message: telemetry, attribute update, RPC, etc.",
+          "layoutX": 100,
+          "layoutY": 300
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsSwitchNode",
+        "name": "Check Originator Type",
+        "configuration": {
+          "jsScript": "// Chi xu ly message tu DEVICE, bo qua ASSET va cac loai khac\nif (msgType === 'POST_TELEMETRY_REQUEST' || msgType === 'POST_ATTRIBUTES_REQUEST') {\n    if (metadata.deviceType !== undefined && metadata.deviceType !== null) {\n        return ['device'];\n    }\n}\nreturn ['other'];"
+        },
+        "additionalInfo": {
+          "description": "Chi xu ly message tu devices, bo qua messages tu assets",
+          "layoutX": 350,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Enrich Device Info",
+        "configuration": {
+          "jsScript": "// Enrich message voi device info\nvar newMetadata = metadata;\nnewMetadata.originatorDeviceId = metadata.deviceName;\nnewMetadata.originatorDeviceType = metadata.deviceType;\nreturn {msg: msg, metadata: newMetadata, msgType: msgType};"
+        },
+        "additionalInfo": {
+          "description": "Them device info vao metadata de su dung trong cac node tiep theo",
+          "layoutX": 600,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.metadata.TbGetRelatedAttributeNode",
+        "name": "Get Home Asset Automations",
+        "configuration": {
+          "attrMapping": {
+            "automations": "homeAutomations",
+            "scenes": "homeScenes"
+          },
+          "relationsQuery": {
+            "direction": "FROM",
+            "maxLevel": 3,
+            "relationFilters": [
+              {
+                "relationType": "Contains",
+                "entityTypes": ["ASSET"]
+              }
+            ]
+          },
+          "telemetry": false,
+          "attrScope": "SERVER_SCOPE"
+        },
+        "additionalInfo": {
+          "description": "Tim Home Asset (parent cua Room chua Device) va doc server attribute 'automations'. Relation chain: Home CONTAINS Room CONTAINS Device, nen maxLevel=3 de tim nguoc tu Device len Home.",
+          "layoutX": 850,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
+        "name": "Has Automation Rules?",
+        "configuration": {
+          "jsScript": "// Kiem tra co automation rules khong\nvar automations = metadata.homeAutomations;\nreturn automations !== null && automations !== undefined && automations !== '' && automations !== '[]';"
+        },
+        "additionalInfo": {
+          "description": "Chi tiep tuc neu Home Asset co automation rules",
+          "layoutX": 1100,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Evaluate Automation Conditions",
+        "configuration": {
+          "jsScript": "// ====== SMARTHOME AUTOMATION ENGINE - CONDITION EVALUATOR ======\n// Node nay doc automation rules tu Home Asset attribute,\n// evaluate conditions dua tren telemetry hien tai,\n// va tra ve danh sach actions can thuc hien.\n\nvar automations = JSON.parse(metadata.homeAutomations || '[]');\nvar triggeredActions = [];\nvar now = new Date();\nvar currentHour = now.getHours();\nvar currentMinute = now.getMinutes();\nvar currentDay = now.getDay(); // 0=Sun, 1=Mon...6=Sat\n// Convert to 1=Mon...7=Sun format\nvar dayOfWeek = currentDay === 0 ? 7 : currentDay;\nvar currentTimeMinutes = currentHour * 60 + currentMinute;\n\nfor (var i = 0; i < automations.length; i++) {\n    var rule = automations[i];\n    \n    // Skip disabled rules\n    if (!rule.enabled) continue;\n    \n    // Skip rules that target gateway execution\n    if (rule.execution_target && rule.execution_target.startsWith('gateway:')) continue;\n    \n    // Check effective period\n    if (rule.extra && rule.extra.effective_period) {\n        var ep = rule.extra.effective_period;\n        if (ep.type === 'custom') {\n            // Check days\n            if (ep.days && ep.days.indexOf(dayOfWeek) === -1) continue;\n            // Check time range\n            if (ep.from && ep.to) {\n                var epFrom = parseInt(ep.from.split(':')[0]) * 60 + parseInt(ep.from.split(':')[1]);\n                var epTo = parseInt(ep.to.split(':')[0]) * 60 + parseInt(ep.to.split(':')[1]);\n                if (currentTimeMinutes < epFrom || currentTimeMinutes > epTo) continue;\n            }\n        }\n    }\n    \n    var conditionsMet = [];\n    var hasDeviceConditionForOrigin = false;\n    \n    for (var j = 0; j < rule.conditions.length; j++) {\n        var cond = rule.conditions[j];\n        var met = false;\n        \n        switch (cond.type) {\n            case 'device_state':\n                // Chi evaluate neu message den tu device nay\n                if (cond.device_id === metadata.originatorId) {\n                    hasDeviceConditionForOrigin = true;\n                    var val = msg[cond.attribute];\n                    if (val !== undefined && val !== null) {\n                        switch (cond.operator) {\n                            case '>':  met = val > cond.value; break;\n                            case '<':  met = val < cond.value; break;\n                            case '>=': met = val >= cond.value; break;\n                            case '<=': met = val <= cond.value; break;\n                            case '==': met = val == cond.value; break;\n                            case '!=': met = val != cond.value; break;\n                        }\n                    }\n                } else {\n                    // Device khac - can query rieng (simplified: skip)\n                    met = false;\n                }\n                break;\n                \n            case 'time_range':\n                var fromParts = cond.from.split(':');\n                var toParts = cond.to.split(':');\n                var fromMin = parseInt(fromParts[0]) * 60 + parseInt(fromParts[1]);\n                var toMin = parseInt(toParts[0]) * 60 + parseInt(toParts[1]);\n                if (fromMin <= toMin) {\n                    met = currentTimeMinutes >= fromMin && currentTimeMinutes <= toMin;\n                } else {\n                    // Overnight: e.g., 22:00 - 06:00\n                    met = currentTimeMinutes >= fromMin || currentTimeMinutes <= toMin;\n                }\n                break;\n                \n            case 'time_schedule':\n                // Simplified cron check - chi ho tro format \"M H * * *\"\n                if (cond.cron) {\n                    var cronParts = cond.cron.split(' ');\n                    if (cronParts.length >= 2) {\n                        var cronMin = cronParts[0] === '*' ? currentMinute : parseInt(cronParts[0]);\n                        var cronHour = cronParts[1] === '*' ? currentHour : parseInt(cronParts[1]);\n                        met = (currentHour === cronHour && currentMinute === cronMin);\n                    }\n                }\n                break;\n                \n            case 'day_of_week':\n                met = cond.days && cond.days.indexOf(dayOfWeek) !== -1;\n                break;\n                \n            case 'device_offline':\n                // Check qua metadata.isOnline (neu co)\n                if (cond.device_id === metadata.originatorId) {\n                    met = metadata.isOnline === 'false';\n                }\n                break;\n        }\n        \n        conditionsMet.push(met);\n    }\n    \n    // Rule phai co it nhat 1 device condition lien quan den device hien tai\n    if (!hasDeviceConditionForOrigin && rule.conditions.some(function(c) { return c.type === 'device_state'; })) {\n        continue;\n    }\n    \n    // Evaluate match type\n    var allMet = false;\n    if (rule.condition_match === 'any') {\n        allMet = conditionsMet.some(function(v) { return v === true; });\n    } else {\n        // Default: 'all'\n        allMet = conditionsMet.length > 0 && conditionsMet.every(function(v) { return v === true; });\n    }\n    \n    if (allMet) {\n        triggeredActions.push({\n            ruleId: rule.id,\n            ruleName: rule.name,\n            actions: rule.actions\n        });\n    }\n}\n\nif (triggeredActions.length > 0) {\n    var newMsg = {\n        triggeredRules: triggeredActions,\n        triggerDevice: metadata.originatorDeviceId || metadata.deviceName,\n        triggerDeviceId: metadata.originatorId,\n        timestamp: now.getTime()\n    };\n    return {msg: newMsg, metadata: metadata, msgType: 'AUTOMATION_TRIGGERED'};\n} else {\n    return {msg: msg, metadata: metadata, msgType: 'NO_MATCH'};\n}"
+        },
+        "additionalInfo": {
+          "description": "Core engine: doc automation rules, evaluate tat ca conditions (device_state, time_range, time_schedule, day_of_week, device_offline), va tra ve triggered actions. Moi lan device gui telemetry, node nay chay va kiem tra tat ca rules.",
+          "layoutX": 1350,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
+        "name": "Automation Triggered?",
+        "configuration": {
+          "jsScript": "return msgType === 'AUTOMATION_TRIGGERED' && msg.triggeredRules && msg.triggeredRules.length > 0;"
+        },
+        "additionalInfo": {
+          "description": "Chi tiep tuc neu co automation rule duoc trigger",
+          "layoutX": 1600,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Split Actions",
+        "configuration": {
+          "jsScript": "// Tach triggered rules thanh tung action rieng le\n// Moi action se duoc xu ly rieng\nvar allActions = [];\nfor (var i = 0; i < msg.triggeredRules.length; i++) {\n    var rule = msg.triggeredRules[i];\n    for (var j = 0; j < rule.actions.length; j++) {\n        var action = rule.actions[j];\n        action._ruleId = rule.ruleId;\n        action._ruleName = rule.ruleName;\n        action._actionIndex = j;\n        allActions.push(action);\n    }\n}\n\n// Tra ve action dau tien, cac action con lai luu vao metadata\nvar newMetadata = metadata;\nnewMetadata.pendingActions = JSON.stringify(allActions);\nnewMetadata.triggerDevice = msg.triggerDevice;\nnewMetadata.triggerTimestamp = msg.timestamp;\n\nif (allActions.length > 0) {\n    return {msg: allActions[0], metadata: newMetadata, msgType: 'EXECUTE_ACTION'};\n}\nreturn {msg: msg, metadata: metadata, msgType: msgType};"
+        },
+        "additionalInfo": {
+          "description": "Tach danh sach actions tu triggered rules thanh tung action de xu ly tuan tu",
+          "layoutX": 1850,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsSwitchNode",
+        "name": "Action Type Router",
+        "configuration": {
+          "jsScript": "// Route action theo type\nswitch (msg.type) {\n    case 'device_command': return ['device_command'];\n    case 'delay':          return ['delay'];\n    case 'send_notification': return ['notification'];\n    case 'run_scene':      return ['run_scene'];\n    default:               return ['unknown'];\n}"
+        },
+        "additionalInfo": {
+          "description": "Route moi action toi node xu ly tuong ung: device_command, delay, notification, run_scene",
+          "layoutX": 2100,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Prepare RPC Request",
+        "configuration": {
+          "jsScript": "// Chuyen doi action thanh RPC request format\nvar rpcRequest = {\n    method: msg.command,\n    params: msg.params || {}\n};\n\n// Luu target device ID vao metadata\nvar newMetadata = metadata;\nnewMetadata.targetDeviceId = msg.device_id;\nnewMetadata.rpcMethod = msg.command;\nnewMetadata.actionRuleId = msg._ruleId;\nnewMetadata.actionRuleName = msg._ruleName;\n\n// Neu device thuoc gateway, them gateway_id\nif (msg.gateway_id) {\n    newMetadata.targetGatewayId = msg.gateway_id;\n}\n\nreturn {msg: rpcRequest, metadata: newMetadata, msgType: 'RPC_CALL_FROM_SERVER_TO_DEVICE'};"
+        },
+        "additionalInfo": {
+          "description": "Chuyen action device_command thanh RPC request co the gui toi device",
+          "layoutX": 2350,
+          "layoutY": 100
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.rpc.TbSendRPCRequestNode",
+        "name": "Send RPC to Device",
+        "configuration": {
+          "timeoutInSeconds": 30
+        },
+        "additionalInfo": {
+          "description": "Gui RPC command toi target device. Device ID lay tu metadata.targetDeviceId. Timeout 30s.",
+          "layoutX": 2600,
+          "layoutY": 100
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.delay.TbMsgDelayNode",
+        "name": "Delay Action",
+        "configuration": {
+          "useMetadataDelay": true,
+          "delayInMs": 1000,
+          "maxPendingMsgs": 100,
+          "periodInSeconds": 60
+        },
+        "additionalInfo": {
+          "description": "Delay action: cho X giay truoc khi thuc hien action tiep theo. Delay value doc tu msg.seconds.",
+          "layoutX": 2350,
+          "layoutY": 300
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Prepare Notification",
+        "configuration": {
+          "jsScript": "// Tao notification message\nvar notification = {\n    title: 'SmartHome Automation',\n    body: msg.message || ('Automation \"' + metadata.actionRuleName + '\" triggered'),\n    target: msg.target || 'owner',\n    ruleId: msg._ruleId,\n    ruleName: msg._ruleName,\n    timestamp: new Date().getTime()\n};\nreturn {msg: notification, metadata: metadata, msgType: 'SEND_NOTIFICATION'};"
+        },
+        "additionalInfo": {
+          "description": "Chuyen action send_notification thanh notification payload",
+          "layoutX": 2350,
+          "layoutY": 450
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
+        "name": "Create Notification Alarm",
+        "configuration": {
+          "alarmType": "SmartHome Notification",
+          "severity": "WARNING",
+          "useMessageAlarmData": false,
+          "alarmDetailsBuildJs": "var details = {};\ndetails.message = msg.body;\ndetails.ruleName = msg.ruleName;\ndetails.ruleId = msg.ruleId;\nreturn details;"
+        },
+        "additionalInfo": {
+          "description": "Tao alarm tu notification action. App se doc alarms va hien thi push notification qua Firebase.",
+          "layoutX": 2600,
+          "layoutY": 450
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Log Automation Result",
+        "configuration": {
+          "jsScript": "// Tao automation execution log\nvar log = {\n    automation_log: JSON.stringify({\n        rule_id: metadata.actionRuleId || 'unknown',\n        rule_name: metadata.actionRuleName || 'unknown',\n        triggered_at: new Date().toISOString(),\n        trigger_device: metadata.triggerDevice || 'unknown',\n        status: 'success',\n        action_type: msg.method || msg.type || 'unknown'\n    })\n};\nreturn {msg: log, metadata: metadata, msgType: 'POST_TELEMETRY_REQUEST'};"
+        },
+        "additionalInfo": {
+          "description": "Tao log entry cho moi automation execution. Log duoc luu vao Home Asset telemetry key 'automation_log'.",
+          "layoutX": 2850,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
+        "name": "Save Automation Log",
+        "configuration": {
+          "defaultTTL": 2592000
+        },
+        "additionalInfo": {
+          "description": "Luu automation log vao telemetry cua Home Asset. TTL 30 ngay.",
+          "layoutX": 3100,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Log Failure",
+        "configuration": {
+          "jsScript": "var log = {\n    automation_log: JSON.stringify({\n        rule_id: metadata.actionRuleId || 'unknown',\n        rule_name: metadata.actionRuleName || 'unknown',\n        triggered_at: new Date().toISOString(),\n        trigger_device: metadata.triggerDevice || 'unknown',\n        status: 'failed',\n        error: msg.error || metadata.error || 'RPC call failed'\n    })\n};\nreturn {msg: log, metadata: metadata, msgType: 'POST_TELEMETRY_REQUEST'};"
+        },
+        "additionalInfo": {
+          "description": "Log failure khi RPC call that bai",
+          "layoutX": 2850,
+          "layoutY": 50
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
+        "name": "Save Failure Log",
+        "configuration": {
+          "defaultTTL": 2592000
+        },
+        "additionalInfo": {
+          "description": "Luu failure log vao telemetry. TTL 30 ngay.",
+          "layoutX": 3100,
+          "layoutY": 50
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.metadata.TbGetOriginatorFieldsNode",
+        "name": "Get Scheduler Device Fields",
+        "configuration": {
+          "fieldsMapping": {
+            "name": "schedulerDeviceName"
+          }
+        },
+        "additionalInfo": {
+          "description": "Node xu ly scheduler heartbeat - lay thong tin device gui heartbeat",
+          "layoutX": 350,
+          "layoutY": 450
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
+        "name": "Is Scheduler Heartbeat?",
+        "configuration": {
+          "jsScript": "// Check neu message la heartbeat tu scheduler device\nreturn metadata.deviceType === 'scheduler' || (msg.heartbeat !== undefined && msg.heartbeat === true);"
+        },
+        "additionalInfo": {
+          "description": "Filter chi lay heartbeat messages tu scheduler device (de trigger time-based automations)",
+          "layoutX": 600,
+          "layoutY": 450
+        }
+      }
+    ],
+    "connections": [
+      {
+        "fromIndex": 0,
+        "toIndex": 1,
+        "type": "Post telemetry"
+      },
+      {
+        "fromIndex": 0,
+        "toIndex": 1,
+        "type": "Post attributes"
+      },
+      {
+        "fromIndex": 1,
+        "toIndex": 2,
+        "type": "device"
+      },
+      {
+        "fromIndex": 1,
+        "toIndex": 19,
+        "type": "other"
+      },
+      {
+        "fromIndex": 2,
+        "toIndex": 3,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 3,
+        "toIndex": 4,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 4,
+        "toIndex": 5,
+        "type": "True"
+      },
+      {
+        "fromIndex": 5,
+        "toIndex": 6,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 6,
+        "toIndex": 7,
+        "type": "True"
+      },
+      {
+        "fromIndex": 7,
+        "toIndex": 8,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 8,
+        "toIndex": 9,
+        "type": "device_command"
+      },
+      {
+        "fromIndex": 8,
+        "toIndex": 11,
+        "type": "delay"
+      },
+      {
+        "fromIndex": 8,
+        "toIndex": 12,
+        "type": "notification"
+      },
+      {
+        "fromIndex": 9,
+        "toIndex": 10,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 10,
+        "toIndex": 14,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 10,
+        "toIndex": 16,
+        "type": "Failure"
+      },
+      {
+        "fromIndex": 12,
+        "toIndex": 13,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 13,
+        "toIndex": 14,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 14,
+        "toIndex": 15,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 16,
+        "toIndex": 17,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 19,
+        "toIndex": 20,
+        "type": "True"
+      },
+      {
+        "fromIndex": 20,
+        "toIndex": 3,
+        "type": "Success"
+      }
+    ],
+    "ruleChainConnections": null
+  }
+}
