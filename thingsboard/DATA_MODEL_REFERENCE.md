@@ -12,7 +12,7 @@ Tài liệu tham khảo telemetry keys, attributes, RPC methods cho từng devic
 | Key | Type | Mô tả |
 |-----|------|--------|
 | `scenes` | JSON array | Danh sách scenes (kịch bản) |
-| `automations` | JSON array | Automation rules chạy trên server |
+| `automations` | JSON array | Automation rules chạy trên server (xem format bên dưới) |
 | `weather_location` | JSON object | `{lat, lon, city}` |
 | `members` | JSON array | `[{user_id, role, name, added_at}]` |
 
@@ -20,6 +20,55 @@ Tài liệu tham khảo telemetry keys, attributes, RPC methods cho từng devic
 | Key | Type | Mô tả |
 |-----|------|--------|
 | `automation_log` | JSON string | Log kết quả chạy automation |
+
+**Automation rule - full format:**
+```json
+{
+  "id": "rule-uuid",
+  "name": "Ten automation",
+  "icon": "thermostat_auto",
+  "color": "#FF5722",
+  "enabled": true,
+  "condition_match": "all",
+  "execution_target": "server",
+  "conditions": [
+    {
+      "type": "device_state",
+      "device_id": "UUID-cua-device-A",
+      "attribute": "temperature",
+      "operator": ">",
+      "value": 30
+    },
+    {
+      "type": "time_range",
+      "from": "05:00",
+      "to": "22:00"
+    }
+  ],
+  "actions": [
+    {
+      "type": "device_command",
+      "device_id": "UUID-cua-device-B",
+      "device_name": "Ten chinh xac cua device B tren ThingsBoard",
+      "command": "toggle",
+      "params": {"power": true}
+    }
+  ],
+  "extra": {
+    "trigger_once": false,
+    "effective_period": {"type": "always"}
+  }
+}
+```
+
+**Quy tắc bắt buộc khi app tạo automation rule:**
+
+| Field trong action | Bắt buộc | Dùng để |
+|--------------------|----------|---------|
+| `device_id` | Có | Evaluate condition (so sánh UUID với originator) |
+| `device_name` | **Có** | `TbChangeOriginatorNode` tìm device theo tên để đổi originator trước khi gửi RPC. Phải khớp **chính xác** tên device trên ThingsBoard. |
+
+> App biết cả `device_id` và `device_name` khi user chọn device trong UI → lưu cả hai vào action JSON khi save rule.
 
 **Relations:** Home `Contains` → Room (smarthome_room)
 
