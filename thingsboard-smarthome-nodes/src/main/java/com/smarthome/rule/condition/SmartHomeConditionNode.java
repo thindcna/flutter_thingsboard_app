@@ -170,46 +170,63 @@ public class SmartHomeConditionNode implements TbNode {
                 }
 
                 // Evaluate each rule against the snapshot
-                List<Map<String, Object>> triggeredRules = new ArrayList<>();
+                List<AutomationRule> matchedRules = new ArrayList<>();
                 for (AutomationRule rule : serverRules) {
                     ConditionEvaluator.Result result = ConditionEvaluator.evaluate(
                             rule, snapshot, finalTriggerDeviceId,
                             finalTriggerData, config.getDeviceStateStalenesMs());
                     if (result.matched) {
-                        Map<String, Object> triggeredRule = new LinkedHashMap<>();
-                        triggeredRule.put("ruleId", rule.getId());
-                        triggeredRule.put("ruleName", rule.getName());
-                        triggeredRule.put("actions", rule.getActions());
-                        triggeredRules.add(triggeredRule);
+                        matchedRules.add(rule);
                         log.debug("Rule '{}' MATCHED for device {}", rule.getName(), finalTriggerDeviceId);
                     }
                 }
 
-                if (triggeredRules.isEmpty()) {
+                if (matchedRules.isEmpty()) {
                     ctx.tellNext(msg, "No Match");
                     return;
                 }
 
-                // Build output message
+                // Emit one EXECUTE_ACTION message per action across all matched rules.
+                // Fan-out via enqueueForTellNext() — all actions run in parallel,
+                // rule chain graph stays a DAG (no cycles needed).
                 try {
-                    Map<String, Object> outputBody = new LinkedHashMap<>();
-                    outputBody.put("triggeredRules", triggeredRules);
-                    outputBody.put("triggerDeviceId", finalTriggerDeviceId.toString());
-                    outputBody.put("triggerDeviceName", msg.getMetaData().getValue("originatorName"));
-                    outputBody.put("timestamp", System.currentTimeMillis());
+                    int totalActions = 0;
+                    TbMsgMetaData baseMeta = msg.getMetaData().copy();
+                    baseMeta.putValue("triggerDeviceId",   finalTriggerDeviceId.toString());
+                    baseMeta.putValue("triggerDeviceName", msg.getMetaData().getValue("originatorName"));
+                    baseMeta.putValue("triggerTimestamp",  String.valueOf(System.currentTimeMillis()));
 
-                    String outputJson = MAPPER.writeValueAsString(outputBody);
-                    TbMsgMetaData meta = msg.getMetaData().copy();
-                    meta.putValue("triggeredRuleCount", String.valueOf(triggeredRules.size()));
+                    for (AutomationRule rule : matchedRules) {
+                        List<AutomationRuleParser.Action> actions = rule.getActions();
+                        if (actions == null || actions.isEmpty()) continue;
 
-                    TbMsg outMsg = ctx.newMsg(
-                            msg.getQueueName(),
-                            "EXECUTE_AUTOMATION",
-                            msg.getOriginator(),
-                            msg.getCustomerId(),
-                            meta,
-                            outputJson);
-                    ctx.tellNext(outMsg, "Matched");
+                        for (AutomationRuleParser.Action action : actions) {
+                            TbMsgMetaData actionMeta = baseMeta.copy();
+                            actionMeta.putValue("actionRuleId",   rule.getId());
+                            actionMeta.putValue("actionRuleName", rule.getName());
+
+                            String actionJson = MAPPER.writeValueAsString(action);
+                            TbMsg actionMsg = ctx.newMsg(
+                                    msg.getQueueName(),
+                                    "EXECUTE_ACTION",
+                                    msg.getOriginator(),
+                                    msg.getCustomerId(),
+                                    actionMeta,
+                                    actionJson);
+
+                            if (totalActions == 0) {
+                                ctx.tellNext(actionMsg, "Matched");
+                            } else {
+                                ctx.enqueueForTellNext(actionMsg, "Matched", () -> {}, t ->
+                                        log.warn("Failed to enqueue action for rule '{}': {}", rule.getName(), t.getMessage()));
+                            }
+                            totalActions++;
+                        }
+                    }
+
+                    if (totalActions == 0) {
+                        ctx.tellNext(msg, "No Match");
+                    }
 
                 } catch (Exception e) {
                     ctx.tellFailure(msg, e);

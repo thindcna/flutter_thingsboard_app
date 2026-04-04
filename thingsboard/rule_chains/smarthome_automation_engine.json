@@ -7,7 +7,7 @@
     "debugMode": false,
     "configuration": null,
     "additionalInfo": {
-      "description": "SmartHome automation engine. Xu ly: (1) device telemetry → SmartHomeConditionNode (multi-device batch query) → SmartHomeBulkCommandNode (parallel RPC); (2) asset telemetry bulk_command → SmartHomeBulkCommandNode truc tiep tu app."
+      "description": "SmartHome automation engine. Xu ly: (1) device telemetry → SmartHomeConditionNode (multi-device batch query, fan-out 1 msg/action) → Action Type Router → SmartHomeBulkCommandNode (parallel RPC); (2) asset telemetry bulk_command → SmartHomeBulkCommandNode truc tiep tu app."
     }
   },
   "metadata": {
@@ -37,11 +37,11 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "jsScript": "// Phan loai originator:\n// - device: telemetry tu thiet bi → chay automation conditions\n// - bulk_command: app gui lenh truc tiep qua Asset telemetry API\n//   (POST /api/plugins/telemetry/ASSET/{homeAssetId}/timeseries/ANY\n//    voi body { \"bulk_command\": { mode, command, params, ... } })\nif (metadata.originatorType === 'ASSET') {\n    if (msg.bulk_command !== undefined && msg.bulk_command !== null) {\n        return ['bulk_command'];\n    }\n    return ['asset_other'];\n}\nreturn ['device'];"
+          "jsScript": "if (metadata.originatorType === 'ASSET') {\n    if (msg.bulk_command !== undefined && msg.bulk_command !== null) {\n        return ['bulk_command'];\n    }\n    return ['asset_other'];\n}\nreturn ['device'];"
         },
         "additionalInfo": {
-          "description": "Phan nhanh: device telemetry di kiem tra automation rules; asset telemetry co bulk_command di xu ly lenh truc tiep tu app.",
-          "layoutX": 450, "layoutY": 300
+          "description": "Phan nhanh: device telemetry → kiem tra automation rules; asset telemetry co bulk_command → xu ly lenh truc tiep tu app.",
+          "layoutX": 500, "layoutY": 300
         }
       },
 
@@ -61,8 +61,8 @@
           "fetchTo": "METADATA"
         },
         "additionalInfo": {
-          "description": "Lay UUID chinh xac cua device vao metadata.originatorId. SmartHomeConditionNode se dung originatorId de biet day la device nao dang gui telemetry (de merge voi du lieu batch query).",
-          "layoutX": 750, "layoutY": 150
+          "description": "Lay UUID chinh xac cua device vao metadata.originatorId.",
+          "layoutX": 800, "layoutY": 150
         }
       },
 
@@ -92,8 +92,8 @@
           }
         },
         "additionalInfo": {
-          "description": "Di nguoc tu Device → Room → Home theo chieu 'TO' (Device la TO trong relation 'Room Contains Device'). Doc server attribute 'automations' tren Home Asset, luu vao metadata.homeAutomations de SmartHomeConditionNode xu ly.",
-          "layoutX": 1050, "layoutY": 150
+          "description": "Di nguoc tu Device → Room → Home theo chieu TO. Doc server attribute 'automations' tren Home Asset vao metadata.homeAutomations.",
+          "layoutX": 1100, "layoutY": 150
         }
       },
 
@@ -108,8 +108,8 @@
           "jsScript": "var a = metadata.homeAutomations;\nreturn a !== null && a !== undefined && a !== '' && a !== '[]' && a !== 'null';"
         },
         "additionalInfo": {
-          "description": "Thoat som neu khong co automation rules. Tranh goi SmartHomeConditionNode khong can thiet.",
-          "layoutX": 1350, "layoutY": 150
+          "description": "Thoat som neu khong co automation rules.",
+          "layoutX": 1400, "layoutY": 150
         }
       },
 
@@ -127,24 +127,8 @@
           "queryTimeoutMs": 5000
         },
         "additionalInfo": {
-          "description": "CUSTOM NODE (com.smarthome.rule.condition.SmartHomeConditionNode).\nBatch query TimeseriesService.findLatest() cho tat ca device IDs xuat hien trong conditions cua tat ca rules.\nMerge voi telemetry hien tai cua trigger device (tu msg body).\nEvaluate tung condition: device_state (so sanh gia tri), time_range, day_of_week, device_offline.\nOutput:\n- 'Matched': co it nhat 1 rule triggered → msg body = { triggeredRules, triggerDeviceId, triggerDeviceName, timestamp }\n- 'No Match': khong co rule nao khop\n- 'Failure': loi parse JSON hoac loi DB query",
-          "layoutX": 1650, "layoutY": 150
-        }
-      },
-
-      {
-        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
-        "name": "Prepare Actions Queue",
-        "debugSettings": null,
-        "singletonMode": false,
-        "queueName": null,
-        "configurationVersion": 0,
-        "configuration": {
-          "jsScript": "// Gom tat ca actions tu tat ca triggered rules thanh queue.\n// Lay action[0] lam msg hien tai, luu phan con lai vao metadata.pendingActions.\nvar allActions = [];\nfor (var i = 0; i < msg.triggeredRules.length; i++) {\n    var rule = msg.triggeredRules[i];\n    if (!rule.actions) continue;\n    for (var j = 0; j < rule.actions.length; j++) {\n        var src = rule.actions[j];\n        allActions.push({\n            type:           src.type,\n            device_id:      src.device_id,\n            device_name:    src.device_name,\n            device_ids:     src.device_ids,\n            room_asset_id:  src.room_asset_id,\n            home_asset_id:  src.home_asset_id,\n            filter_type:    src.filter_type,\n            command:        src.command,\n            params:         src.params,\n            message:        src.message,\n            seconds:        src.seconds,\n            _ruleId:        rule.ruleId,\n            _ruleName:      rule.ruleName\n        });\n    }\n}\nif (allActions.length === 0) {\n    return {msg: {}, metadata: metadata, msgType: 'NO_MORE_ACTIONS'};\n}\nvar newMeta = metadata;\nnewMeta.triggerDeviceId   = String(msg.triggerDeviceId || '');\nnewMeta.triggerDeviceName = String(msg.triggerDeviceName || '');\nnewMeta.triggerTimestamp  = String(msg.timestamp || new Date().getTime());\nvar first = allActions.splice(0, 1)[0];\nnewMeta.pendingActions = JSON.stringify(allActions);\nnewMeta.actionRuleId   = first._ruleId;\nnewMeta.actionRuleName = first._ruleName;\nreturn {msg: first, metadata: newMeta, msgType: 'EXECUTE_ACTION'};"
-        },
-        "additionalInfo": {
-          "description": "Flatten tat ca actions tu tat ca triggered rules vao 1 queue (array). Lay action dau tien lam current msg (EXECUTE_ACTION), luu phan con lai vao metadata.pendingActions de Next Action node xu ly tuan tu.",
-          "layoutX": 1950, "layoutY": 150
+          "description": "CUSTOM NODE. Batch query TimeseriesService.findLatest() cho tat ca device IDs trong conditions. Evaluate tung rule. Output: phat ra 1 TB message doc lap (EXECUTE_ACTION) cho MO^I action trong tat ca rules da triggered — dung ctx.enqueueForTellNext() de fan-out song song, khong can loop trong rule chain. Output: Matched / No Match / Failure.",
+          "layoutX": 1700, "layoutY": 150
         }
       },
 
@@ -156,11 +140,11 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "jsScript": "// Route action toi node xu ly tuong ung.\n// device_command (1 device) va bulk_command (nhieu devices) deu di qua\n// Normalize to Bulk Format → SmartHomeBulkCommandNode.\nswitch (msg.type) {\n    case 'device_command':    return ['bulk_command'];\n    case 'bulk_command':      return ['bulk_command'];\n    case 'send_notification': return ['notification'];\n    case 'delay':             return ['delay'];\n    default:                  return ['unknown'];\n}"
+          "jsScript": "switch (msg.type) {\n    case 'device_command':    return ['bulk_command'];\n    case 'bulk_command':      return ['bulk_command'];\n    case 'send_notification': return ['notification'];\n    case 'delay':             return ['delay'];\n    default:                  return ['unknown'];\n}"
         },
         "additionalInfo": {
-          "description": "Phan nhanh theo loai action. Ca device_command (1 device) lan bulk_command (nhieu devices) deu di qua SmartHomeBulkCommandNode vi node do tu xu ly theo mode.",
-          "layoutX": 2250, "layoutY": 300
+          "description": "Phan nhanh theo loai action. Ca device_command lan bulk_command deu di qua SmartHomeBulkCommandNode.",
+          "layoutX": 2000, "layoutY": 150
         }
       },
 
@@ -172,11 +156,11 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "jsScript": "// Chuyen device_command (1 device) hoac bulk_command (nhieu devices)\n// ve cung 1 format ma SmartHomeBulkCommandNode chap nhan.\n//\n// Input device_command: { type, device_id, command, params }\n// → Output: { mode: 'device_list', device_ids: [device_id], command, params }\n//\n// Input bulk_command: { type, mode, room_asset_id|home_asset_id|device_ids, command, params, filter_type }\n// → Output: giu nguyen (bo truong 'type' va '_rule*')\nvar out;\nif (msg.type === 'device_command') {\n    out = {\n        mode:       'device_list',\n        device_ids: [msg.device_id],\n        command:    msg.command,\n        params:     msg.params || {}\n    };\n} else {\n    out = {\n        mode:           msg.mode || 'device_list',\n        device_ids:     msg.device_ids,\n        room_asset_id:  msg.room_asset_id,\n        home_asset_id:  msg.home_asset_id,\n        command:        msg.command,\n        params:         msg.params || {},\n        filter_type:    msg.filter_type || null\n    };\n}\nvar newMeta = metadata;\nnewMeta.actionRuleId   = msg._ruleId   || metadata.actionRuleId;\nnewMeta.actionRuleName = msg._ruleName || metadata.actionRuleName;\nreturn {msg: out, metadata: newMeta, msgType: 'BULK_COMMAND'};"
+          "jsScript": "var out;\nif (msg.type === 'device_command') {\n    out = {\n        mode:       'device_list',\n        device_ids: [msg.device_id],\n        command:    msg.command,\n        params:     msg.params || {}\n    };\n} else {\n    out = {\n        mode:          msg.mode || 'device_list',\n        device_ids:    msg.device_ids,\n        room_asset_id: msg.room_asset_id,\n        home_asset_id: msg.home_asset_id,\n        command:       msg.command,\n        params:        msg.params || {},\n        filter_type:   msg.filter_type || null\n    };\n}\nreturn {msg: out, metadata: metadata, msgType: 'BULK_COMMAND'};"
         },
         "additionalInfo": {
-          "description": "Normalize device_command va bulk_command ve cung input format truoc khi vao SmartHomeBulkCommandNode: { mode, device_ids|room_asset_id|home_asset_id, command, params, filter_type }.",
-          "layoutX": 2550, "layoutY": 200
+          "description": "Normalize device_command (1 device) va bulk_command (nhieu devices) ve cung format truoc khi vao SmartHomeBulkCommandNode.",
+          "layoutX": 2300, "layoutY": 100
         }
       },
 
@@ -195,8 +179,8 @@
           "relationQueryTimeoutMs": 3000
         },
         "additionalInfo": {
-          "description": "CUSTOM NODE (com.smarthome.rule.command.SmartHomeBulkCommandNode).\nDoc mode tu msg body:\n- 'device_list': gui RPC toi danh sach device IDs cu the\n- 'room': RelationService.findByFromAndTypeAsync(roomAssetId, 'Contains') → danh sach device → gui parallel\n- 'home': di qua tung room → collect tat ca devices → gui parallel\nGui ToDeviceRpcRequest(deviceId, command, params) truc tiep theo UUID, khong can originator swap.\nOutput:\n- 'Success': tat ca devices thanh cong\n- 'Partial Success': mot so thanh cong (continueOnPartialFailure=true)\n- 'Failure': tat ca fail hoac loi query relations",
-          "layoutX": 2850, "layoutY": 200
+          "description": "CUSTOM NODE. Gui RPC den nhieu devices theo mode: device_list / room / home. Parallel RPC. Output: Success / Partial Success / Failure.",
+          "layoutX": 2600, "layoutY": 100
         }
       },
 
@@ -213,8 +197,8 @@
           "maxPendingMsgs": 100
         },
         "additionalInfo": {
-          "description": "Cho X giay (lay tu msg.seconds neu co, mac dinh 5s) truoc khi xu ly action tiep theo. Dung cho automation co action kieu 'delay'.",
-          "layoutX": 2550, "layoutY": 400
+          "description": "Cho X giay cho action kieu 'delay'. Vi actions da fan-out song song, delay nay chi anh huong action do, khong block actions khac.",
+          "layoutX": 2300, "layoutY": 300
         }
       },
 
@@ -227,47 +211,15 @@
         "configurationVersion": 0,
         "configuration": {
           "alarmType": "SmartHome Notification",
-          "alarmDetailsBuildJs": "var d = {};\nd.message  = msg.message  || 'Automation triggered';\nd.ruleName = msg._ruleName || '';\nreturn d;",
+          "alarmDetailsBuildJs": "var d = {};\nd.message  = msg.message  || 'Automation triggered';\nd.ruleName = metadata.actionRuleName || '';\nreturn d;",
           "severity": "WARNING",
           "useMessageAlarmData": false,
           "overwriteExistingAlarmSeverity": false,
           "dynamicSeverity": false
         },
         "additionalInfo": {
-          "description": "Tao alarm kieu 'SmartHome Notification' cho action 'send_notification'. App doc alarm history de hien thi lich su thong bao.",
-          "layoutX": 2550, "layoutY": 580
-        }
-      },
-
-      {
-        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
-        "name": "Next Action",
-        "debugSettings": null,
-        "singletonMode": false,
-        "queueName": null,
-        "configurationVersion": 0,
-        "configuration": {
-          "jsScript": "// Pop action tiep theo tu queue.\n// Neu con action → EXECUTE_ACTION → loop lai Action Type Router.\n// Neu het → NO_MORE_ACTIONS → ket thuc (di toi Build Log).\nvar pending = JSON.parse(metadata.pendingActions || '[]');\nif (pending.length === 0) {\n    return {msg: msg, metadata: metadata, msgType: 'NO_MORE_ACTIONS'};\n}\nvar next = pending.splice(0, 1)[0];\nvar newMeta = metadata;\nnewMeta.pendingActions = JSON.stringify(pending);\nnewMeta.actionRuleId   = next._ruleId   || metadata.actionRuleId;\nnewMeta.actionRuleName = next._ruleName || metadata.actionRuleName;\nreturn {msg: next, metadata: newMeta, msgType: 'EXECUTE_ACTION'};"
-        },
-        "additionalInfo": {
-          "description": "Pop action tiep theo tu metadata.pendingActions. Tat ca branches (bulk success, bulk partial, delay, notification) hoi tu ve day. Output EXECUTE_ACTION neu con action, NO_MORE_ACTIONS neu het.",
-          "layoutX": 3150, "layoutY": 390
-        }
-      },
-
-      {
-        "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
-        "name": "Has Next Action?",
-        "debugSettings": null,
-        "singletonMode": false,
-        "queueName": null,
-        "configurationVersion": 0,
-        "configuration": {
-          "jsScript": "return msgType === 'EXECUTE_ACTION';"
-        },
-        "additionalInfo": {
-          "description": "True → con action → loop lai Action Type Router de xu ly.\nFalse → het action → Build Log de luu ket qua tong hop.",
-          "layoutX": 3400, "layoutY": 390
+          "description": "Tao alarm kieu SmartHome Notification cho action send_notification. App doc alarm history de hien thi lich su.",
+          "layoutX": 2300, "layoutY": 480
         }
       },
 
@@ -279,11 +231,11 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "jsScript": "// Tao ban ghi log luu vao telemetry key 'automation_log' tren Home Asset.\n// msg o day la ket qua cua action cuoi cung (bulk command result hoac noop khi het action).\nvar log = {\n    automation_log: JSON.stringify({\n        rule_id:        metadata.actionRuleId    || 'direct',\n        rule_name:      metadata.actionRuleName  || 'direct_command',\n        triggered_at:   new Date().toISOString(),\n        trigger_device: metadata.triggerDeviceName || metadata.triggerDeviceId || 'app',\n        status:         'success',\n        total:          msg.totalDevices   || 0,\n        success_count:  msg.successCount   || 0,\n        failed_count:   msg.failedCount    || 0\n    })\n};\nreturn {msg: log, metadata: metadata, msgType: 'POST_TELEMETRY_REQUEST'};"
+          "jsScript": "var log = {\n    automation_log: JSON.stringify({\n        rule_id:        metadata.actionRuleId    || 'direct',\n        rule_name:      metadata.actionRuleName  || 'direct_command',\n        triggered_at:   new Date().toISOString(),\n        trigger_device: metadata.triggerDeviceName || metadata.triggerDeviceId || 'app',\n        status:         'success',\n        total:          msg.totalDevices  || 0,\n        success_count:  msg.successCount  || 0,\n        failed_count:   msg.failedCount   || 0\n    })\n};\nreturn {msg: log, metadata: metadata, msgType: 'POST_TELEMETRY_REQUEST'};"
         },
         "additionalInfo": {
-          "description": "Tao log entry sau khi tat ca actions hoan thanh thanh cong. Luu vao telemetry key 'automation_log' tren Home Asset. App doc de hien thi lich su automation.",
-          "layoutX": 3650, "layoutY": 250
+          "description": "Tao log entry sau khi action hoan thanh. Luu vao telemetry key automation_log.",
+          "layoutX": 2900, "layoutY": 100
         }
       },
 
@@ -299,8 +251,8 @@
           "processingSettings": { "type": "ON_EVERY_MESSAGE" }
         },
         "additionalInfo": {
-          "description": "Luu automation_log vao timeseries cua originator (Home Asset neu la direct command, hoac device neu la automation). TTL = 30 ngay.",
-          "layoutX": 3900, "layoutY": 250
+          "description": "Luu automation_log vao timeseries. TTL = 30 ngay.",
+          "layoutX": 3200, "layoutY": 100
         }
       },
 
@@ -312,11 +264,11 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "jsScript": "// Log loi: tu SmartHomeConditionNode 'Failure' hoac SmartHomeBulkCommandNode 'Failure'.\nvar log = {\n    automation_log: JSON.stringify({\n        rule_id:        metadata.actionRuleId   || 'unknown',\n        rule_name:      metadata.actionRuleName || 'unknown',\n        triggered_at:   new Date().toISOString(),\n        trigger_device: metadata.triggerDeviceName || metadata.triggerDeviceId || 'app',\n        status:         'failed',\n        total:          msg.totalDevices  || 0,\n        success_count:  msg.successCount  || 0,\n        failed_count:   msg.failedCount   || 0,\n        error:          msg.error         || 'condition_evaluation_failed',\n        results:        msg.results       || []\n    })\n};\nreturn {msg: log, metadata: metadata, msgType: 'POST_TELEMETRY_REQUEST'};"
+          "jsScript": "var log = {\n    automation_log: JSON.stringify({\n        rule_id:        metadata.actionRuleId   || 'unknown',\n        rule_name:      metadata.actionRuleName || 'unknown',\n        triggered_at:   new Date().toISOString(),\n        trigger_device: metadata.triggerDeviceName || metadata.triggerDeviceId || 'app',\n        status:         'failed',\n        total:          msg.totalDevices  || 0,\n        success_count:  msg.successCount  || 0,\n        failed_count:   msg.failedCount   || 0,\n        error:          msg.error         || 'evaluation_or_rpc_failed',\n        results:        msg.results       || []\n    })\n};\nreturn {msg: log, metadata: metadata, msgType: 'POST_TELEMETRY_REQUEST'};"
         },
         "additionalInfo": {
-          "description": "Tao log entry khi co loi (tu SmartHomeConditionNode Failure hoac SmartHomeBulkCommandNode Failure). Luu vao cung key 'automation_log'.",
-          "layoutX": 3650, "layoutY": 530
+          "description": "Tao log entry khi co loi (tu SmartHomeConditionNode Failure hoac SmartHomeBulkCommandNode Failure).",
+          "layoutX": 2900, "layoutY": 350
         }
       },
 
@@ -333,7 +285,7 @@
         },
         "additionalInfo": {
           "description": "Luu failure log vao timeseries. TTL = 30 ngay.",
-          "layoutX": 3900, "layoutY": 530
+          "layoutX": 3200, "layoutY": 350
         }
       },
 
@@ -345,11 +297,11 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "jsScript": "// App gui direct bulk command qua Asset telemetry API:\n// POST /api/plugins/telemetry/ASSET/{homeAssetId}/timeseries/ANY\n// Body: { \"bulk_command\": { mode, room_asset_id|home_asset_id|device_ids, command, params, filter_type } }\n//\n// Unwrap msg.bulk_command ra, set metadata trigger = app, pendingActions = [] (khong co them action sau).\nvar bc = msg.bulk_command;\nvar out = {\n    mode:           bc.mode          || 'device_list',\n    device_ids:     bc.device_ids,\n    room_asset_id:  bc.room_asset_id,\n    home_asset_id:  bc.home_asset_id,\n    command:        bc.command,\n    params:         bc.params        || {},\n    filter_type:    bc.filter_type   || null\n};\nvar newMeta = metadata;\nnewMeta.triggerDeviceName = 'app';\nnewMeta.triggerDeviceId   = metadata.originatorId || 'app';\nnewMeta.triggerTimestamp  = String(new Date().getTime());\nnewMeta.actionRuleId      = 'direct';\nnewMeta.actionRuleName    = 'app_direct_command';\nnewMeta.pendingActions    = '[]';\nreturn {msg: out, metadata: newMeta, msgType: 'BULK_COMMAND'};"
+          "jsScript": "var bc = msg.bulk_command;\nvar out = {\n    mode:          bc.mode          || 'device_list',\n    device_ids:    bc.device_ids,\n    room_asset_id: bc.room_asset_id,\n    home_asset_id: bc.home_asset_id,\n    command:       bc.command,\n    params:        bc.params        || {},\n    filter_type:   bc.filter_type   || null\n};\nvar newMeta = metadata;\nnewMeta.triggerDeviceName = 'app';\nnewMeta.triggerDeviceId   = metadata.originatorId || 'app';\nnewMeta.triggerTimestamp  = String(new Date().getTime());\nnewMeta.actionRuleId      = 'direct';\nnewMeta.actionRuleName    = 'app_direct_command';\nreturn {msg: out, metadata: newMeta, msgType: 'BULK_COMMAND'};"
         },
         "additionalInfo": {
-          "description": "Xu ly direct bulk_command tu app (qua Asset telemetry API). Unwrap msg.bulk_command, dat pendingActions='[]' (chi co 1 action, khong loop), roi di thang toi SmartHomeBulkCommandNode.",
-          "layoutX": 750, "layoutY": 480
+          "description": "Xu ly direct bulk_command tu app (qua Asset telemetry API). Unwrap msg.bulk_command roi di thang toi SmartHomeBulkCommandNode.",
+          "layoutX": 800, "layoutY": 480
         }
       }
 
@@ -360,41 +312,33 @@
       { "fromIndex": 0,  "toIndex": 1,  "type": "Post attributes" },
 
       { "fromIndex": 1,  "toIndex": 2,  "type": "device" },
-      { "fromIndex": 1,  "toIndex": 18, "type": "bulk_command" },
+      { "fromIndex": 1,  "toIndex": 14, "type": "bulk_command" },
 
       { "fromIndex": 2,  "toIndex": 3,  "type": "Success" },
       { "fromIndex": 3,  "toIndex": 4,  "type": "Success" },
-
       { "fromIndex": 4,  "toIndex": 5,  "type": "True" },
 
       { "fromIndex": 5,  "toIndex": 6,  "type": "Matched" },
-      { "fromIndex": 5,  "toIndex": 16, "type": "Failure" },
+      { "fromIndex": 5,  "toIndex": 12, "type": "Failure" },
 
-      { "fromIndex": 6,  "toIndex": 7,  "type": "Success" },
+      { "fromIndex": 6,  "toIndex": 7,  "type": "bulk_command" },
+      { "fromIndex": 6,  "toIndex": 9,  "type": "delay" },
+      { "fromIndex": 6,  "toIndex": 10, "type": "notification" },
 
-      { "fromIndex": 7,  "toIndex": 8,  "type": "bulk_command" },
-      { "fromIndex": 7,  "toIndex": 10, "type": "delay" },
-      { "fromIndex": 7,  "toIndex": 11, "type": "notification" },
+      { "fromIndex": 7,  "toIndex": 8,  "type": "Success" },
 
-      { "fromIndex": 8,  "toIndex": 9,  "type": "Success" },
+      { "fromIndex": 8,  "toIndex": 11, "type": "Success" },
+      { "fromIndex": 8,  "toIndex": 11, "type": "Partial Success" },
+      { "fromIndex": 8,  "toIndex": 12, "type": "Failure" },
 
-      { "fromIndex": 9,  "toIndex": 12, "type": "Success" },
-      { "fromIndex": 9,  "toIndex": 12, "type": "Partial Success" },
-      { "fromIndex": 9,  "toIndex": 16, "type": "Failure" },
+      { "fromIndex": 9,  "toIndex": 11, "type": "Success" },
+      { "fromIndex": 10, "toIndex": 11, "type": "Created" },
+      { "fromIndex": 10, "toIndex": 11, "type": "Updated" },
 
-      { "fromIndex": 10, "toIndex": 12, "type": "Success" },
-      { "fromIndex": 11, "toIndex": 12, "type": "Created" },
-
+      { "fromIndex": 11, "toIndex": 12, "type": "Success" },
       { "fromIndex": 12, "toIndex": 13, "type": "Success" },
 
-      { "fromIndex": 13, "toIndex": 14, "type": "True" },
-      { "fromIndex": 13, "toIndex": 14, "type": "False" },
-
-      { "fromIndex": 14, "toIndex": 15, "type": "Success" },
-
-      { "fromIndex": 16, "toIndex": 17, "type": "Success" },
-
-      { "fromIndex": 18, "toIndex": 9,  "type": "Success" }
+      { "fromIndex": 14, "toIndex": 8,  "type": "Success" }
 
     ],
     "ruleChainConnections": null

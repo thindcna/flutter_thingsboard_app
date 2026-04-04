@@ -342,3 +342,10 @@ for c in json.load(sys.stdin):
 | Node hiển thị nhưng config form trống | Config class không implement `NodeConfiguration` đúng cách | Kiểm tra `defaultConfiguration()` method |
 | RPC không gửi được | `deviceId` không hợp lệ hoặc device offline | Kiểm tra log TB: `journalctl -u thingsboard -f` |
 | `getError()` luôn có giá trị dù device online | `oneway=false` nhưng device không respond trong timeout | Tăng `rpcTimeoutMs` trong node config |
+
+
+## Rebuild
+cd /mnt/d/github/thingsboard/flutter_thingsboard_app_ai/thingsboard-smarthome-nodes
+mvn clean package -DskipTests
+cp target/smarthome-rule-nodes-1.0.0.jar /usr/share/thingsboard/extensions/
+systemctl restart thingsboard
