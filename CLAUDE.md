@@ -904,6 +904,312 @@ App mobile tương tác với Gateway thông qua ThingsBoard API (không kết n
 
 ---
 
+## ThingsBoard Custom Java Rule Nodes
+
+Hai custom rule node cần xây dựng dưới dạng plugin JAR (không fork TB source).
+Deploy: copy JAR vào `{TB_HOME}/extensions/`, restart ThingsBoard.
+
+### Node 1: SmartHome Multi-Device Condition Node
+
+**Mục đích:** Evaluate automation conditions trên NHIỀU devices cùng lúc bằng cách query thẳng DB (TimeseriesService). Giải quyết giới hạn của JS rule node (chỉ đọc được msg của 1 device).
+
+**Class:** `com.smarthome.rule.SmartHomeConditionNode`
+
+**Tham số đầu vào (message):**
+```
+msgType: POST_TELEMETRY_REQUEST | POST_ATTRIBUTES_REQUEST
+originator: Device entity (device vừa gửi telemetry)
+msg body: { "temperature": 35, "humidity": 60, ... }  ← telemetry data
+metadata:
+  - originatorId      (UUID, set bởi TbGetOriginatorFieldsNode trước đó)
+  - originatorName    (tên device)
+  - homeAutomations   (JSON string, set bởi TbGetRelatedAttributeNode trước đó)
+                       nếu null → node tự query từ Home Asset
+```
+
+**Node config (hiển thị trong TB UI):**
+```java
+public class SmartHomeConditionConfig {
+    // Tên server attribute chứa automation rules trên Home Asset
+    // Default: "automations"
+    String automationsAttributeKey = "automations";
+
+    // Scope của attribute
+    // Default: SERVER_SCOPE
+    AttributeScope attributeScope = SERVER_SCOPE;
+
+    // Thời gian tối đa telemetry của device khác vẫn còn hợp lệ (ms)
+    // Nếu latest telemetry của device B cũ hơn staleness → bỏ qua condition đó
+    // Default: 300000 (5 phút)
+    long deviceStateStalenesMs = 300_000;
+
+    // Timeout cho async DB query (ms)
+    // Default: 5000
+    long queryTimeoutMs = 5_000;
+}
+```
+
+**Output connections:**
+```
+"Matched"    → có ít nhất 1 rule triggered → forward msg mới chứa triggered rules
+"No Match"   → không có rule nào matched
+"Failure"    → lỗi parse JSON, lỗi DB query
+```
+
+**Output message (connection "Matched"):**
+```json
+{
+  "triggeredRules": [
+    {
+      "ruleId": "uuid",
+      "ruleName": "Bat dieu hoa khi nong",
+      "actions": [...]
+    }
+  ],
+  "triggerDeviceId": "uuid-cua-device-A",
+  "triggerDeviceName": "Cam bien nhiet do phong ngu",
+  "timestamp": 1775200000000
+}
+```
+
+**Logic nội bộ:**
+```
+1. Parse homeAutomations từ metadata (hoặc tự query nếu thiếu)
+2. Collect tất cả device_ids xuất hiện trong conditions
+3. Batch query TimeseriesService.findLatest(tenantId, deviceIds, keys)
+   → Trả về Map<DeviceId, Map<String, TsKvEntry>>
+4. Merge với data hiện tại của originator device (từ msg body)
+5. Evaluate conditions:
+   - device_state: so sánh giá trị từ batch query
+   - time_range / day_of_week / time_schedule: tính từ server time
+   - device_offline: check ts của latest telemetry vs staleness threshold
+6. Forward tới output tương ứng
+```
+
+---
+
+### Node 2: SmartHome Bulk Command Node
+
+**Mục đích:** Gửi RPC command tới NHIỀU devices cùng lúc theo device UUID list,
+room asset ID, hoặc home asset ID. Dùng RelationService để resolve devices,
+RpcService để gửi parallel. Không phụ thuộc originator hay tên device.
+
+**Class:** `com.smarthome.rule.SmartHomeBulkCommandNode`
+
+**Tham số đầu vào (message):**
+```
+msgType: bất kỳ (thường EXECUTE_ACTION từ condition node)
+msg body — 1 trong 3 mode:
+
+Mode 1: device_list — gửi tới danh sách device cụ thể
+{
+  "mode": "device_list",
+  "device_ids": ["uuid-A", "uuid-B", "uuid-C"],
+  "command": "toggle",
+  "params": {"power": false},
+  "filter_type": "light"    // optional: chỉ gửi tới devices có type này
+}
+
+Mode 2: room — gửi tới tất cả devices trong room asset
+{
+  "mode": "room",
+  "room_asset_id": "uuid-room",
+  "command": "toggle",
+  "params": {"power": false},
+  "filter_type": "light"    // optional: chỉ gửi tới loại thiết bị cụ thể
+}
+
+Mode 3: home — gửi tới tất cả devices trong home (tất cả rooms)
+{
+  "mode": "home",
+  "home_asset_id": "uuid-home",
+  "command": "toggle",
+  "params": {"power": false},
+  "filter_type": null       // null = tất cả loại thiết bị
+}
+```
+
+**Node config:**
+```java
+public class SmartHomeBulkCommandConfig {
+    // Timeout cho mỗi RPC call (ms)
+    // Default: 10000
+    int rpcTimeoutMs = 10_000;
+
+    // Gửi song song hay tuần tự
+    // Parallel: nhanh hơn, nhưng nếu 1 cái fail không ảnh hưởng cái khác
+    // Sequential: chậm hơn, dùng khi device cần xử lý theo thứ tự
+    // Default: PARALLEL
+    ExecutionMode executionMode = PARALLEL;
+
+    // Có tiếp tục nếu 1 số device fail không
+    // Default: true (best-effort)
+    boolean continueOnPartialFailure = true;
+
+    // Relation type để tìm devices từ room/home asset
+    // Default: "Contains"
+    String relationTypeFilter = "Contains";
+
+    // Timeout query RelationService (ms)
+    // Default: 3000
+    long relationQueryTimeoutMs = 3_000;
+}
+```
+
+**Output connections:**
+```
+"Success"         → tất cả devices nhận lệnh thành công
+"Partial Success" → một số thành công, một số fail (continueOnPartialFailure=true)
+"Failure"         → tất cả fail hoặc lỗi query relations
+```
+
+**Output message:**
+```json
+{
+  "totalDevices": 5,
+  "successCount": 4,
+  "failedCount": 1,
+  "results": [
+    {"deviceId": "uuid-A", "deviceName": "Den tran", "status": "success"},
+    {"deviceId": "uuid-B", "deviceName": "Den ngu",  "status": "success"},
+    {"deviceId": "uuid-C", "deviceName": "Den bep",  "status": "failed", "error": "timeout"}
+  ]
+}
+```
+
+**Logic nội bộ:**
+```
+Mode room/home:
+  1. RelationService.findByFrom(roomOrHomeAssetId, "Contains", EntityType.DEVICE)
+     → List<EntityRelation> → extract deviceIds
+  2. Nếu filter_type != null: lọc theo device profile name
+
+Mode device_list:
+  1. Dùng deviceIds trực tiếp từ msg
+
+Tất cả modes:
+  3. Tạo List<ListenableFuture<RpcResponse>> bằng cách gọi:
+     RpcService.sendToDeviceNewRpc(deviceId, command, params, timeout)
+     cho từng device (parallel via Futures.allAsList hoặc sequential)
+  4. Collect results → build output message
+  5. Forward tới output connection tương ứng
+```
+
+---
+
+### Project structure cho custom nodes
+
+```
+thingsboard-smarthome-nodes/
+├── pom.xml                          # Maven, depend on tb-rule-engine-api
+└── src/main/java/com/smarthome/rule/
+    ├── condition/
+    │   ├── SmartHomeConditionNode.java
+    │   ├── SmartHomeConditionConfig.java
+    │   └── SmartHomeConditionNodeFactory.java
+    ├── command/
+    │   ├── SmartHomeBulkCommandNode.java
+    │   ├── SmartHomeBulkCommandConfig.java
+    │   └── SmartHomeBulkCommandNodeFactory.java
+    └── util/
+        ├── AutomationRuleParser.java  # Parse JSON automation rules
+        ├── ConditionEvaluator.java    # Evaluate conditions (time, device_state, etc.)
+        └── RelationResolver.java      # Resolve room/home → device list
+
+# pom.xml dependencies:
+# - thingsboard-rule-engine-api (provided)
+# - thingsboard-common (provided)
+# - jackson-databind
+# - guava (Futures)
+```
+
+### App side — khi nào dùng node nào
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ AUTOMATION (trigger tự động):                                       │
+│   Custom nodes được trigger bởi rule chain, KHÔNG phải từ app       │
+│                                                                     │
+│   Device A gửi telemetry                                            │
+│     → Rule Chain                                                    │
+│     → SmartHomeConditionNode (evaluate multi-device conditions)     │
+│     → SmartHomeBulkCommandNode (gửi RPC tới N devices theo mode)   │
+│                                                                     │
+│   App chỉ cần: lưu automation rule vào Home Asset attribute         │
+│   POST /api/plugins/telemetry/{homeAssetId}/SERVER_SCOPE            │
+│   { "automations": [...] }                                          │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ SCENE / DIRECT CONTROL (app chủ động):                              │
+│                                                                     │
+│   Tất cả devices cùng 1 gateway (phổ biến nhất):                   │
+│     App → POST /api/rpc/twoway/{gatewayId}                          │
+│           { "method": "control_room",                               │
+│             "params": { "room_id": "...", "command": "toggle",      │
+│                         "params": {"power": false} } }              │
+│     → Gateway broadcast local (nhanh nhất, offline được)            │
+│                                                                     │
+│   Devices phân tán nhiều gateway / cloud:                           │
+│     App → POST /api/plugins/telemetry/ASSET/{homeAssetId}          │
+│                /timeseries/ANY                                       │
+│           {                                                          │
+│             "bulk_command": {                                        │
+│               "mode": "room",          // "room"|"home"|"device_list"│
+│               "room_asset_id": "uuid", // nếu mode=room             │
+│               "home_asset_id": "uuid", // nếu mode=home             │
+│               "device_ids": ["uuid"],  // nếu mode=device_list      │
+│               "command": "toggle",                                  │
+│               "params": {"power": false},                           │
+│               "filter_type": "light"   // optional, lọc theo type   │
+│             }                                                        │
+│           }                                                          │
+│     → Rule Chain nhận POST_TELEMETRY_REQUEST, originator=Home Asset │
+│     → Detect key "bulk_command" → SmartHomeBulkCommandNode          │
+│     → RelationService resolve devices → Parallel RPC                │
+│                                                                     │
+│   Lợi ích pattern Asset telemetry:                                  │
+│     ✓ App chỉ cần 1 API call (không resolve relations trước)        │
+│     ✓ Không cần "scene runner device" giả                           │
+│     ✓ Home Asset ID app đã có sẵn (lưu local)                      │
+│     ✓ Log ghi lại trên Home Asset telemetry                         │
+│     ✓ SmartHomeBulkCommandNode tái sử dụng cho cả automation        │
+│       lẫn direct control                                            │
+└─────────────────────────────────────────────────────────────────────┘
+
+### Rule Chain — tách nhánh DEVICE vs ASSET
+
+Rule Chain cần xử lý cả 2 loại originator:
+
+```
+Message Type Switch (POST_TELEMETRY_REQUEST)
+         ↓
+   Originator Type?
+   ┌──────────┴───────────┐
+DEVICE                  ASSET
+   ↓                      ↓
+Is Device Message?    Has "bulk_command" key?
+   ↓ True                 ↓ True
+SmartHomeConditionNode  SmartHomeBulkCommandNode
+   ↓ Matched              ↓ Success/Partial/Failure
+SmartHomeBulkCommandNode  Build Log → Save Log
+   ↓
+Build Log → Save Log
+```
+
+JS Switch node để detect originator type:
+```javascript
+// Detect originator type từ metadata
+if (metadata.originatorType === 'ASSET' || metadata.entityType === 'ASSET') {
+    // Kiểm tra có bulk_command không
+    if (msg.bulk_command !== undefined) return ['bulk_command'];
+    return ['asset_other'];
+}
+return ['device'];
+```
+
+---
+
 ## Key References
 
 - ThingsBoard REST API: `{TB_HOST}/swagger-ui.html`
