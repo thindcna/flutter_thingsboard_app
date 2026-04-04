@@ -383,11 +383,11 @@
       { "fromIndex": 9,  "toIndex": 16, "type": "Failure" },
 
       { "fromIndex": 10, "toIndex": 12, "type": "Success" },
-      { "fromIndex": 11, "toIndex": 12, "type": "Success" },
+      { "fromIndex": 11, "toIndex": 12, "type": "Created" },
 
       { "fromIndex": 12, "toIndex": 13, "type": "Success" },
 
-      { "fromIndex": 13, "toIndex": 7,  "type": "True" },
+      { "fromIndex": 13, "toIndex": 14, "type": "True" },
       { "fromIndex": 13, "toIndex": 14, "type": "False" },
 
       { "fromIndex": 14, "toIndex": 15, "type": "Success" },
