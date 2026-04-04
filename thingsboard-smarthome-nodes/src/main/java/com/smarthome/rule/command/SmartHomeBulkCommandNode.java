@@ -75,7 +75,16 @@ public class SmartHomeBulkCommandNode implements TbNode {
             return;
         }
 
-        String mode    = (String) body.getOrDefault("mode", "device_list");
+        String mode = (String) body.getOrDefault("mode", "device_list");
+
+        // multi_command: list of {device_id, command, params} sent in parallel in one shot.
+        // Used by SmartHomeConditionNode to fan-out multiple device_command actions simultaneously
+        // without needing separate rule chain messages (which would be sequential per partition).
+        if ("multi_command".equals(mode)) {
+            handleMultiCommand(ctx, msg, body);
+            return;
+        }
+
         String command = (String) body.get("command");
         @SuppressWarnings("unchecked")
         Map<String, Object> params = body.containsKey("params")
@@ -132,7 +141,7 @@ public class SmartHomeBulkCommandNode implements TbNode {
             }
         }
 
-        final String finalCommand   = command;
+        final String finalCommand    = command;
         final String finalParamsJson = paramsJson;
 
         Futures.addCallback(devicesFuture, new FutureCallback<List<DeviceId>>() {
@@ -151,6 +160,91 @@ public class SmartHomeBulkCommandNode implements TbNode {
                 ctx.tellFailure(msg, t);
             }
         }, dbExec);
+    }
+
+    /**
+     * Handles mode=multi_command: each entry in "commands" array targets a specific device
+     * with its own command and params. All RPCs are fired in parallel (true simultaneous).
+     *
+     * Input body:
+     * {
+     *   "mode": "multi_command",
+     *   "commands": [
+     *     {"device_id": "uuid-A", "command": "toggle", "params": {"power": true}},
+     *     {"device_id": "uuid-B", "command": "setTemp", "params": {"temp": 24}}
+     *   ]
+     * }
+     */
+    @SuppressWarnings("unchecked")
+    private void handleMultiCommand(TbContext ctx, TbMsg msg, Map<String, Object> body) {
+        List<Map<String, Object>> commands = (List<Map<String, Object>>) body.get("commands");
+        if (commands == null || commands.isEmpty()) {
+            ctx.tellFailure(msg, new IllegalArgumentException("mode=multi_command requires non-empty 'commands' array"));
+            return;
+        }
+
+        int total = commands.size();
+        List<DeviceResult> results = Collections.synchronizedList(new ArrayList<>(total));
+        AtomicInteger done = new AtomicInteger(0);
+        AtomicBoolean alreadyFailed = new AtomicBoolean(false);
+
+        for (Map<String, Object> entry : commands) {
+            String deviceIdStr = (String) entry.get("device_id");
+            String command     = (String) entry.get("command");
+            Map<String, Object> params = entry.containsKey("params")
+                    ? (Map<String, Object>) entry.get("params")
+                    : Map.of();
+
+            if (deviceIdStr == null || command == null) {
+                results.add(new DeviceResult(String.valueOf(deviceIdStr), "failed", "missing device_id or command"));
+                if (done.incrementAndGet() == total && !alreadyFailed.get()) {
+                    finishAndForward(ctx, msg, results, total);
+                }
+                continue;
+            }
+
+            DeviceId deviceId;
+            try {
+                deviceId = new DeviceId(UUID.fromString(deviceIdStr));
+            } catch (IllegalArgumentException e) {
+                results.add(new DeviceResult(deviceIdStr, "failed", "invalid device_id UUID"));
+                if (done.incrementAndGet() == total && !alreadyFailed.get()) {
+                    finishAndForward(ctx, msg, results, total);
+                }
+                continue;
+            }
+
+            String paramsJson;
+            try {
+                paramsJson = MAPPER.writeValueAsString(params);
+            } catch (IOException e) {
+                results.add(new DeviceResult(deviceIdStr, "failed", "params serialization error"));
+                if (done.incrementAndGet() == total && !alreadyFailed.get()) {
+                    finishAndForward(ctx, msg, results, total);
+                }
+                continue;
+            }
+
+            RuleEngineDeviceRpcRequest rpcRequest = buildRpcRequest(ctx, deviceId, command, paramsJson);
+            final String finalDeviceIdStr = deviceIdStr;
+
+            ctx.getRpcService().sendRpcRequestToDevice(rpcRequest, response -> {
+                boolean success = response.getError().isEmpty();
+                String errorMsg = response.getError().map(Enum::name).orElse(null);
+                results.add(new DeviceResult(finalDeviceIdStr, success ? "success" : "failed", errorMsg));
+
+                if (!success && !config.isContinueOnPartialFailure()) {
+                    if (alreadyFailed.compareAndSet(false, true)) {
+                        buildAndForward(ctx, msg, results, total, "Failure");
+                    }
+                    return;
+                }
+
+                if (done.incrementAndGet() == total && !alreadyFailed.get()) {
+                    finishAndForward(ctx, msg, results, total);
+                }
+            });
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

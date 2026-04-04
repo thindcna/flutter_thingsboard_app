@@ -186,45 +186,112 @@ public class SmartHomeConditionNode implements TbNode {
                     return;
                 }
 
-                // Emit one EXECUTE_ACTION message per action across all matched rules.
-                // Fan-out via enqueueForTellNext() — all actions run in parallel,
-                // rule chain graph stays a DAG (no cycles needed).
+                // Fan-out: emit one TB message per "execution slot".
+                //
+                // Actions are processed in order. Delays act as barriers that separate
+                // device_command groups. Delay durations are accumulated (cumulative from trigger),
+                // so each deferred group knows exactly when to fire relative to trigger time.
+                //
+                // Example: [cmd_A, cmd_B, delay_5s, cmd_C, delay_3s, cmd_D]
+                //   → emit immediately: multi_command {A, B}
+                //   → emit deferred 5s: {type:"delay", seconds:5, deferred_commands:[C]}
+                //   → emit deferred 8s: {type:"delay", seconds:8, deferred_commands:[D]}
+                //
+                // The Delay node in the rule chain holds the deferred message, then the
+                // "Execute Deferred" transform converts deferred_commands → multi_command.
+                // Result: all commands fire at the correct time with true parallelism within
+                // each group.
                 try {
-                    int totalActions = 0;
                     TbMsgMetaData baseMeta = msg.getMetaData().copy();
                     baseMeta.putValue("triggerDeviceId",   finalTriggerDeviceId.toString());
                     baseMeta.putValue("triggerDeviceName", msg.getMetaData().getValue("originatorName"));
                     baseMeta.putValue("triggerTimestamp",  String.valueOf(System.currentTimeMillis()));
 
+                    // Flatten all actions from all matched rules in order
+                    List<AutomationRuleParser.Action> allActions = new ArrayList<>();
                     for (AutomationRule rule : matchedRules) {
-                        List<AutomationRuleParser.Action> actions = rule.getActions();
-                        if (actions == null || actions.isEmpty()) continue;
+                        if (rule.getActions() != null) allActions.addAll(rule.getActions());
+                    }
 
-                        for (AutomationRuleParser.Action action : actions) {
-                            TbMsgMetaData actionMeta = baseMeta.copy();
-                            actionMeta.putValue("actionRuleId",   rule.getId());
-                            actionMeta.putValue("actionRuleName", rule.getName());
+                    if (allActions.isEmpty()) {
+                        ctx.tellNext(msg, "No Match");
+                        return;
+                    }
 
-                            String actionJson = MAPPER.writeValueAsString(action);
-                            TbMsg actionMsg = ctx.newMsg(
-                                    msg.getQueueName(),
-                                    "EXECUTE_ACTION",
-                                    msg.getOriginator(),
-                                    msg.getCustomerId(),
-                                    actionMeta,
-                                    actionJson);
+                    // Split into groups at delay boundaries
+                    // Each group: { cumulativeDelaySeconds, List<deviceCommandEntries>, List<otherActions> }
+                    List<ActionGroup> groups = new ArrayList<>();
+                    ActionGroup currentGroup = new ActionGroup(0);
 
-                            if (totalActions == 0) {
-                                ctx.tellNext(actionMsg, "Matched");
-                            } else {
-                                ctx.enqueueForTellNext(actionMsg, "Matched", () -> {}, t ->
-                                        log.warn("Failed to enqueue action for rule '{}': {}", rule.getName(), t.getMessage()));
+                    for (AutomationRuleParser.Action action : allActions) {
+                        if ("delay".equals(action.getType())) {
+                            // Flush current group (even if empty — delay still advances the clock)
+                            groups.add(currentGroup);
+                            currentGroup = new ActionGroup(currentGroup.cumulativeSeconds + action.getSeconds());
+                        } else if ("device_command".equals(action.getType()) && action.getDeviceId() != null) {
+                            Map<String, Object> entry = new LinkedHashMap<>();
+                            entry.put("device_id", action.getDeviceId());
+                            entry.put("command",   action.getCommand());
+                            entry.put("params",    action.getParams() != null ? action.getParams() : Map.of());
+                            currentGroup.deviceCommands.add(entry);
+                        } else {
+                            currentGroup.otherActions.add(action);
+                        }
+                    }
+                    groups.add(currentGroup); // flush last group
+
+                    boolean first = true;
+                    int emitted = 0;
+
+                    for (ActionGroup group : groups) {
+                        if (group.deviceCommands.isEmpty() && group.otherActions.isEmpty()) continue;
+
+                        if (group.cumulativeSeconds == 0) {
+                            // Immediate execution group
+                            if (!group.deviceCommands.isEmpty()) {
+                                TbMsg m = buildMultiCommandMsg(ctx, msg, baseMeta,
+                                        group.deviceCommands, "immediate");
+                                if (first) { ctx.tellNext(m, "Matched"); first = false; }
+                                else { enqueue(ctx, m, "Matched"); }
+                                emitted++;
                             }
-                            totalActions++;
+                            for (AutomationRuleParser.Action other : group.otherActions) {
+                                TbMsg m = buildActionMsg(ctx, msg, baseMeta, other);
+                                if (first) { ctx.tellNext(m, "Matched"); first = false; }
+                                else { enqueue(ctx, m, "Matched"); }
+                                emitted++;
+                            }
+                        } else {
+                            // Deferred execution group — wrap in a delay message.
+                            // The Delay node holds it, then "Execute Deferred" transform fires commands.
+                            Map<String, Object> deferredBody = new LinkedHashMap<>();
+                            deferredBody.put("type",              "delay");
+                            deferredBody.put("seconds",           group.cumulativeSeconds);
+                            deferredBody.put("deferred_commands", group.deviceCommands);
+                            deferredBody.put("deferred_other",    group.otherActions.stream()
+                                    .map(a -> {
+                                        try { return MAPPER.convertValue(a, Map.class); }
+                                        catch (Exception ex) { return Map.of("type", a.getType()); }
+                                    }).collect(Collectors.toList()));
+
+                            TbMsgMetaData deferMeta = baseMeta.copy();
+                            deferMeta.putValue("actionRuleId",   "deferred");
+                            deferMeta.putValue("actionRuleName", "deferred_" + group.cumulativeSeconds + "s");
+                            deferMeta.putValue("delaySeconds",   String.valueOf(group.cumulativeSeconds));
+
+                            String deferJson = MAPPER.writeValueAsString(deferredBody);
+                            TbMsg deferMsg = ctx.newMsg(
+                                    msg.getQueueName(), "EXECUTE_ACTION",
+                                    msg.getOriginator(), msg.getCustomerId(),
+                                    deferMeta, deferJson);
+
+                            if (first) { ctx.tellNext(deferMsg, "Matched"); first = false; }
+                            else { enqueue(ctx, deferMsg, "Matched"); }
+                            emitted++;
                         }
                     }
 
-                    if (totalActions == 0) {
+                    if (emitted == 0) {
                         ctx.tellNext(msg, "No Match");
                     }
 
@@ -245,6 +312,46 @@ public class SmartHomeConditionNode implements TbNode {
     @Override
     public void destroy() {
         // no resources to release
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private TbMsg buildMultiCommandMsg(TbContext ctx, TbMsg original, TbMsgMetaData baseMeta,
+                                       List<Map<String, Object>> commands, String label) throws Exception {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("mode",     "multi_command");
+        body.put("commands", commands);
+        TbMsgMetaData meta = baseMeta.copy();
+        meta.putValue("actionRuleId",   label);
+        meta.putValue("actionRuleName", "multi_device_command");
+        return ctx.newMsg(original.getQueueName(), "EXECUTE_ACTION",
+                original.getOriginator(), original.getCustomerId(),
+                meta, MAPPER.writeValueAsString(body));
+    }
+
+    private TbMsg buildActionMsg(TbContext ctx, TbMsg original, TbMsgMetaData baseMeta,
+                                 AutomationRuleParser.Action action) throws Exception {
+        TbMsgMetaData meta = baseMeta.copy();
+        meta.putValue("actionRuleId",   "other");
+        meta.putValue("actionRuleName", action.getType());
+        return ctx.newMsg(original.getQueueName(), "EXECUTE_ACTION",
+                original.getOriginator(), original.getCustomerId(),
+                meta, MAPPER.writeValueAsString(action));
+    }
+
+    private void enqueue(TbContext ctx, TbMsg m, String relation) {
+        ctx.enqueueForTellNext(m, relation, () -> {}, t ->
+                log.warn("Failed to enqueue msg type={}: {}", m.getType(), t.getMessage()));
+    }
+
+    private static class ActionGroup {
+        final int cumulativeSeconds;
+        final List<Map<String, Object>> deviceCommands = new ArrayList<>();
+        final List<AutomationRuleParser.Action> otherActions = new ArrayList<>();
+
+        ActionGroup(int cumulativeSeconds) {
+            this.cumulativeSeconds = cumulativeSeconds;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

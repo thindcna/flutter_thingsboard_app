@@ -15,6 +15,7 @@ com/smarthome/rule/util/RelationResolver.class
 com/smarthome/rule/command/SmartHomeBulkCommandConfig.class
 com/smarthome/rule/condition/SmartHomeConditionNode$1.class
 com/smarthome/rule/command/SmartHomeBulkCommandConfig$ExecutionMode.class
+com/smarthome/rule/condition/SmartHomeConditionNode$ActionGroup.class
 com/smarthome/rule/util/AutomationRuleParser$Action.class
 com/smarthome/rule/condition/SmartHomeConditionNode.class
 com/smarthome/rule/util/AutomationRuleParser.class
