@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wsl -d Ubuntu-24.04 -- bash -c \"java -version 2>&1 && echo '---' && mvn -version 2>&1 && echo '---' && systemctl is-active thingsboard 2>&1\")",
+      "Bash(wsl -d Ubuntu-24.04 -- bash -c \"sudo apt-get install -y maven 2>&1 | tail -5\")",
+      "Bash(wsl -d Ubuntu-24.04 -- bash -c \"ls /usr/share/thingsboard/bin/thingsboard.jar -la 2>&1 && echo '---' && unzip -l /usr/share/thingsboard/bin/thingsboard.jar 2>&1 | grep -E 'rule-engine|rule.engine|NodeConfiguration|TbNode' | head -20\")"
+    ]
+  }
+}

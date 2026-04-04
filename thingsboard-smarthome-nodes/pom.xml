@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.smarthome</groupId>
+    <artifactId>smarthome-rule-nodes</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>SmartHome Custom Rule Nodes</name>
+    <description>
+        Custom ThingsBoard rule engine nodes for SmartHome automation:
+        - SmartHomeConditionNode: multi-device condition evaluation via DB batch query
+        - SmartHomeBulkCommandNode: parallel RPC to many devices (by list/room/home)
+    </description>
+
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- Match the ThingsBoard CE version deployed on the server -->
+        <tb.version>4.3.1.1</tb.version>
+        <jackson.version>2.15.2</jackson.version>
+        <guava.version>32.1.2-jre</guava.version>
+        <lombok.version>1.18.30</lombok.version>
+        <slf4j.version>2.0.7</slf4j.version>
+    </properties>
+
+    <!--
+        ThingsBoard does NOT publish to Maven Central.
+        You must build TB locally or install its JARs:
+
+        Option A — build from source:
+            git clone https://github.com/thingsboard/thingsboard.git
+            cd thingsboard && mvn install -DskipTests
+
+        Option B — copy JARs from a running TB installation:
+            {TB_HOME}/lib/thingsboard.jar  →  mvn install:install-file
+              -Dfile=thingsboard.jar -DgroupId=org.thingsboard
+              -DartifactId=application -Dversion=4.0.0 -Dpackaging=jar
+
+        Then update tb.version above to match.
+    -->
+
+    <dependencies>
+
+        <!-- ThingsBoard Rule Engine API: TbNode, TbContext, RuleNode, NodeConfiguration, RuleEngineRpcService -->
+        <dependency>
+            <groupId>org.thingsboard</groupId>
+            <artifactId>rule-engine-api</artifactId>
+            <version>${tb.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ThingsBoard Rule Engine Components: TbNodeUtils, ComponentType, built-in node helpers -->
+        <dependency>
+            <groupId>org.thingsboard</groupId>
+            <artifactId>rule-engine-components</artifactId>
+            <version>${tb.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ThingsBoard DAO API: TimeseriesService, RelationService -->
+        <dependency>
+            <groupId>org.thingsboard</groupId>
+            <artifactId>dao-api</artifactId>
+            <version>${tb.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ThingsBoard common data: DeviceId, TenantId, TsKvEntry, ComponentType, EntityRelation -->
+        <dependency>
+            <groupId>org.thingsboard</groupId>
+            <artifactId>common-data</artifactId>
+            <version>${tb.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ThingsBoard common message: TbMsg, TbMsgMetaData -->
+        <dependency>
+            <groupId>org.thingsboard</groupId>
+            <artifactId>common-message</artifactId>
+            <version>${tb.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ThingsBoard common util: ListeningExecutor -->
+        <dependency>
+            <groupId>org.thingsboard</groupId>
+            <artifactId>common-util</artifactId>
+            <version>${tb.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Jackson — for parsing automation rule JSON from metadata/attributes -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+            <!-- provided if TB ships it; use compile if unsure -->
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- Guava — ListenableFuture, Futures.allAsList, immutable collections -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>${guava.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Lombok — reduces boilerplate on config POJOs -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- SLF4J — TB provides the implementation at runtime -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+
+            <!-- Shade plugin: produce a fat JAR that embeds only jackson-databind
+                 (everything else is provided by TB's classloader). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <shadedArtifactAttached>false</shadedArtifactAttached>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <!-- Include ONLY what TB does not already provide -->
+                                <includes>
+                                    <include>com.smarthome:*</include>
+                                    <include>com.fasterxml.jackson.core:*</include>
+                                </includes>
+                            </artifactSet>
+                            <relocations>
+                                <!-- Relocate jackson to avoid version conflicts with TB's own jackson -->
+                                <relocation>
+                                    <pattern>com.fasterxml.jackson</pattern>
+                                    <shadedPattern>com.smarthome.shaded.jackson</shadedPattern>
+                                </relocation>
+                            </relocations>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+
+        </plugins>
+    </build>
+
+</project>

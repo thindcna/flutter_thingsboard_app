@@ -1,0 +1,9 @@
+{
+  "extensionName": "SmartHome Rule Nodes",
+  "description": "Custom rule nodes for SmartHome automation on ThingsBoard CE",
+  "version": "1.0.0",
+  "nodes": [
+    "com.smarthome.rule.condition.SmartHomeConditionNode",
+    "com.smarthome.rule.command.SmartHomeBulkCommandNode"
+  ]
+}

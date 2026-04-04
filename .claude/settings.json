@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wsl -d Ubuntu-24.04 -- bash -c \"sudo apt-get list --installed 2>/dev/null | grep maven\")",
+      "Bash(wsl -d Ubuntu-24.04 -- bash -c \"dpkg -l maven 2>&1\")",
+      "Bash(wsl -d Ubuntu-24.04 -- bash -c \"sudo unzip -p /usr/share/thingsboard/bin/thingsboard.jar META-INF/MANIFEST.MF 2>&1 | head -20\")",
+      "Bash(wsl -d Ubuntu-24.04 -- bash -c \"sudo cat /usr/share/thingsboard/conf/thingsboard.yml 2>&1 | grep -i version | head -5\")",
+      "Bash(wsl -d Ubuntu-24.04 -- bash -c \"dpkg -l thingsboard 2>&1\")",
+      "Bash(wsl -d Ubuntu-24.04 -- bash -c \"mvn -version 2>&1\")"
+    ]
+  }
+}

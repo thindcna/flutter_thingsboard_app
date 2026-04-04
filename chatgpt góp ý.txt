@@ -1,0 +1,193 @@
+Thiết kế của bạn rất chuẩn hướng production 👍 — đặc biệt là ý tưởng tách:
+
+Node 1 → Condition (read + evaluate)
+Node 2 → Action (fan-out RPC)
+
+👉 Đây đúng kiểu kiến trúc scalable trên ThingsBoard.
+
+Mình review + góp ý sâu để bạn tránh lỗi khi implement thật 👇
+
+🧠 1. Đánh giá tổng thể
+✅ Điểm mạnh
+✔ Không phụ thuộc JS node (đúng hướng)
+✔ Batch query Timeseries → tối ưu hiệu năng
+✔ Dùng RelationService → dynamic topology
+✔ Tách Condition / Action → clean architecture
+✔ Plugin JAR → không fork TB (rất tốt)
+
+👉 Đây là design enterprise-ready rồi
+
+⚠️ 2. Những điểm cần sửa / tối ưu (quan trọng)
+❗ 2.1 Node 1 – Timeseries query chưa tối ưu hoàn toàn
+
+Bạn đang:
+
+TimeseriesService.findLatest(tenantId, deviceIds, keys)
+
+👉 Vấn đề:
+
+API này trong TB:
+❌ không thực sự batch tốt nếu keys khác nhau
+❌ dễ bị N+1 query ngầm
+✅ Cách tốt hơn
+
+👉 Group theo key:
+
+Map<key, List<DeviceId>>
+
+→ query theo key trước, rồi merge
+
+🚀 Advanced (nên làm nếu scale lớn)
+Cache latest telemetry (Caffeine / Guava cache)
+TTL = 5–10s
+
+👉 giảm load DB cực mạnh
+
+❗ 2.2 “device_offline” check chưa đủ
+
+Bạn đang:
+
+check ts của latest telemetry vs staleness
+
+👉 Nhưng TB có sẵn:
+
+DeviceStateService
+✅ Nên dùng:
+deviceStateService.isDeviceActive(deviceId)
+
+👉 chính xác hơn:
+
+dựa trên activity timeout
+không chỉ timestamp
+❗ 2.3 homeAutomations trong metadata có thể rất nặng
+
+Nếu bạn lưu JSON lớn:
+
+{
+  "rules": [ ... nhiều rule ... ]
+}
+
+👉 sẽ gây:
+
+❌ metadata size lớn
+❌ serialize/deserialize chậm
+✅ Khuyến nghị
+✔ Option A (tốt nhất):
+chỉ truyền homeId
+node tự query attribute
+✔ Option B:
+cache automations theo homeId
+❗ 2.4 Condition engine nên compile trước
+
+Hiện tại bạn sẽ:
+
+Parse JSON → evaluate từng lần
+
+👉 không tối ưu
+
+✅ Cách tốt hơn
+parse → compile rule thành object (AST)
+cache theo homeId
+🔥 3. Node 2 – Bulk Command (rất tốt, chỉ cần tweak nhỏ)
+❗ 3.1 Relation query nên recursive (home → room → device)
+
+Bạn đang:
+
+findByFrom(homeId, "Contains", DEVICE)
+
+👉 sẽ FAIL nếu:
+
+Home → Room → Device
+✅ Fix chuẩn:
+relationService.findByFromAndType(homeId, "Contains")
+→ nếu gặp Asset → recurse tiếp
+→ collect Device
+❗ 3.2 RPC parallel cần limit concurrency
+
+Bạn đang:
+
+Futures.allAsList(...)
+
+👉 nếu 1000 device:
+
+❌ bắn 1000 RPC cùng lúc
+❌ dễ quá tải
+✅ Nên dùng:
+Semaphore / ThreadPool limit = 20–50
+❗ 3.3 RpcService API
+
+Chuẩn hơn nên dùng:
+
+rpcService.sendRpcRequest(...)
+
+(hoặc API tương ứng version bạn dùng)
+
+👉 sendToDeviceNewRpc có thể deprecated theo version
+
+❗ 3.4 filter_type nên dựa vào Device Profile
+
+Bạn đang:
+
+filter_type: "light"
+
+👉 nên map:
+
+deviceProfileName
+✅ Hoặc nâng cấp:
+"filter": {
+  "type": "light",
+  "tags": ["living_room"]
+}
+🚀 4. Flow hoàn chỉnh (rất đẹp nếu làm đúng)
+Device telemetry
+   ↓
+SmartHomeConditionNode
+   ↓ (Matched)
+SmartHomeBulkCommandNode
+   ↓
+RPC → Devices
+💡 5. Gợi ý nâng cấp (rất đáng làm)
+🚀 5.1 Thêm debounce / cooldown
+
+Tránh spam:
+
+Nhiệt độ > 30 → gửi lệnh liên tục
+🚀 5.2 Thêm priority / conflict resolution
+
+Ví dụ:
+
+Rule A: bật điều hòa
+Rule B: tắt điều hòa
+
+👉 cần resolve
+
+🚀 5.3 Thêm dry-run mode
+
+Debug:
+
+{
+  "dryRun": true
+}
+
+→ không gửi RPC, chỉ log
+
+🚀 5.4 Thêm audit log
+
+Ghi lại:
+
+rule nào trigger
+gửi lệnh gì
+thành công / fail
+🎯 6. Kết luận
+
+👉 Thiết kế của bạn:
+
+✔ Đúng hướng production
+✔ Scale tốt
+✔ Phù hợp Smarthome platform
+
+🚨 Những thứ bắt buộc nên fix
+Recursive relation (home → room → device)
+Limit RPC concurrency
+Không rely hoàn toàn vào metadata JSON lớn
+Cache + compile rules
