@@ -208,13 +208,13 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "useMetadataDelay": true,
-          "metadataDelayKey": "delaySeconds",
+          "useMetadataPeriodInSecondsPatterns": true,
+          "periodInSecondsPattern": "${delaySeconds}",
           "periodInSeconds": 5,
           "maxPendingMsgs": 100
         },
         "additionalInfo": {
-          "description": "Giu msg X giay (lay tu metadata.delaySeconds — cumulative tu luc trigger). Sau do chuyen toi Execute Deferred.",
+          "description": "Giu msg X giay (lay tu metadata.delaySeconds qua pattern ${delaySeconds}). Sau do chuyen toi Execute Deferred.",
           "layoutX": 2550, "layoutY": 300
         }
       },

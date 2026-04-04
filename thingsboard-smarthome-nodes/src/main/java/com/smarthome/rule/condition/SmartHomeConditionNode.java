@@ -270,8 +270,12 @@ public class SmartHomeConditionNode implements TbNode {
                             deferredBody.put("deferred_commands", group.deviceCommands);
                             deferredBody.put("deferred_other",    group.otherActions.stream()
                                     .map(a -> {
-                                        try { return MAPPER.convertValue(a, Map.class); }
-                                        catch (Exception ex) { return Map.of("type", a.getType()); }
+                                        try {
+                                            String json = MAPPER.writeValueAsString(a);
+                                            return MAPPER.readValue(json, new TypeReference<Map<String, Object>>() {});
+                                        } catch (Exception ex) {
+                                            return Map.of("type", a.getType());
+                                        }
                                     }).collect(Collectors.toList()));
 
                             TbMsgMetaData deferMeta = baseMeta.copy();
