@@ -85,7 +85,17 @@ public class SmartHomeSceneExecutorNode implements TbNode {
             return;
         }
 
-        // Load "scenes" attribute from the originator (Home Asset)
+        final String finalSceneId = sceneId;
+
+        // Automation path: node 2 (TbGetRelatedAttributeNode) already fetched "scenes" into metadata.homeScenes
+        // Tap to Run path: metadata.homeScenes is absent → query originator (Home Asset) directly
+        String metaScenes = msg.getMetaData().getValue("homeScenes");
+        if (metaScenes != null && !metaScenes.isBlank() && !metaScenes.equals("null")) {
+            executeWithScenesJson(ctx, msg, finalSceneId, metaScenes);
+            return;
+        }
+
+        // Tap to Run path: originator IS the Home Asset — query directly
         EntityId originatorId = msg.getOriginator();
         ListeningExecutor dbExec = ctx.getDbCallbackExecutor();
 
@@ -93,8 +103,6 @@ public class SmartHomeSceneExecutorNode implements TbNode {
                 ctx.getAttributesService().find(
                         ctx.getTenantId(), originatorId,
                         AttributeScope.SERVER_SCOPE, config.getScenesAttributeKey());
-
-        final String finalSceneId = sceneId;
 
         Futures.addCallback(attrFuture, new FutureCallback<Optional<AttributeKvEntry>>() {
 
@@ -106,58 +114,7 @@ public class SmartHomeSceneExecutorNode implements TbNode {
                     return;
                 }
 
-                String scenesJson = result.get().getValueAsString();
-                List<Scene> scenes;
-                try {
-                    scenes = AutomationRuleParser.parseScenes(scenesJson);
-                } catch (Exception e) {
-                    log.error("Failed to parse scenes JSON", e);
-                    ctx.tellFailure(msg, e);
-                    return;
-                }
-
-                // Build lookup map for recursive run_scene resolution
-                Map<String, Scene> sceneMap = scenes.stream()
-                        .collect(Collectors.toMap(Scene::getId, s -> s, (a, b) -> a));
-
-                // Find the requested scene
-                Scene scene = sceneMap.get(finalSceneId);
-                if (scene == null || !scene.isEnabled()) {
-                    log.warn("Scene '{}' not found or disabled", finalSceneId);
-                    ctx.tellNext(msg, "No Scene");
-                    return;
-                }
-
-                // Resolve actions (expand run_scene recursively)
-                List<Action> resolvedActions;
-                try {
-                    resolvedActions = resolveActions(scene.getActions(), sceneMap, 0);
-                } catch (Exception e) {
-                    log.error("Failed to resolve scene actions for scene '{}'", finalSceneId, e);
-                    ctx.tellFailure(msg, e);
-                    return;
-                }
-
-                if (resolvedActions.isEmpty()) {
-                    ctx.tellNext(msg, "No Scene");
-                    return;
-                }
-
-                // Fan out via shared ActionExecutor
-                TbMsgMetaData baseMeta = msg.getMetaData().copy();
-                baseMeta.putValue("sceneId",        finalSceneId);
-                baseMeta.putValue("sceneName",      scene.getName());
-                baseMeta.putValue("triggerTimestamp", String.valueOf(System.currentTimeMillis()));
-
-                try {
-                    int emitted = ActionExecutor.fanOut(ctx, msg, baseMeta, resolvedActions, "Success", log);
-                    if (emitted == 0) {
-                        ctx.tellNext(msg, "No Scene");
-                    }
-                } catch (Exception e) {
-                    log.error("Failed to fan out scene '{}' actions", finalSceneId, e);
-                    ctx.tellFailure(msg, e);
-                }
+                executeWithScenesJson(ctx, msg, finalSceneId, result.get().getValueAsString());
             }
 
             @Override
@@ -167,6 +124,65 @@ public class SmartHomeSceneExecutorNode implements TbNode {
             }
 
         }, dbExec);
+    }
+
+    private void executeWithScenesJson(TbContext ctx, TbMsg msg, String sceneId, String scenesJson) {
+        if (scenesJson == null || scenesJson.isBlank()) {
+            ctx.tellNext(msg, "No Scene");
+            return;
+        }
+
+        List<Scene> scenes;
+        try {
+            scenes = AutomationRuleParser.parseScenes(scenesJson);
+        } catch (Exception e) {
+            log.error("Failed to parse scenes JSON", e);
+            ctx.tellFailure(msg, e);
+            return;
+        }
+
+        // Build lookup map for recursive run_scene resolution
+        Map<String, Scene> sceneMap = scenes.stream()
+                .collect(Collectors.toMap(Scene::getId, s -> s, (a, b) -> a));
+
+        // Find the requested scene
+        Scene scene = sceneMap.get(sceneId);
+        if (scene == null || !scene.isEnabled()) {
+            log.warn("Scene '{}' not found or disabled", sceneId);
+            ctx.tellNext(msg, "No Scene");
+            return;
+        }
+
+        // Resolve actions (expand run_scene recursively)
+        List<Action> resolvedActions;
+        try {
+            resolvedActions = resolveActions(scene.getActions(), sceneMap, 0);
+        } catch (Exception e) {
+            log.error("Failed to resolve scene actions for scene '{}'", sceneId, e);
+            ctx.tellFailure(msg, e);
+            return;
+        }
+
+        if (resolvedActions.isEmpty()) {
+            ctx.tellNext(msg, "No Scene");
+            return;
+        }
+
+        // Fan out via shared ActionExecutor
+        TbMsgMetaData baseMeta = msg.getMetaData().copy();
+        baseMeta.putValue("sceneId",          sceneId);
+        baseMeta.putValue("sceneName",        scene.getName());
+        baseMeta.putValue("triggerTimestamp", String.valueOf(System.currentTimeMillis()));
+
+        try {
+            int emitted = ActionExecutor.fanOut(ctx, msg, baseMeta, resolvedActions, "Success", log);
+            if (emitted == 0) {
+                ctx.tellNext(msg, "No Scene");
+            }
+        } catch (Exception e) {
+            log.error("Failed to fan out scene '{}' actions", sceneId, e);
+            ctx.tellFailure(msg, e);
+        }
     }
 
     /**

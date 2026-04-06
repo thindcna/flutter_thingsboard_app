@@ -79,11 +79,12 @@
           "dataToFetch": "ATTRIBUTES",
           "fetchTo": "METADATA",
           "dataMapping": {
-            "automations": "homeAutomations"
+            "automations": "homeAutomations",
+            "scenes": "homeScenes"
           }
         },
         "additionalInfo": {
-          "description": "Di nguoc tu Device → Room → Home theo chieu TO. Doc server attribute 'automations' tren Home Asset vao metadata.homeAutomations.",
+          "description": "Di nguoc tu Device → Room → Home theo chieu TO. Doc server attribute 'automations' va 'scenes' tren Home Asset vao metadata.",
           "layoutX": 1300,
           "layoutY": 328
         }
@@ -131,7 +132,7 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "jsScript": "var t = msg.type || msg.mode;\nswitch (t) {\n    case 'device_command':    return ['bulk_command'];\n    case 'bulk_command':      return ['bulk_command'];\n    case 'multi_command':     return ['bulk_command'];\n    case 'send_notification': return ['notification'];\n    case 'delay':             return ['delay'];\n    default:                  return ['unknown'];\n}"
+          "jsScript": "var t = msg.type || msg.mode;\nswitch (t) {\n    case 'device_command':    return ['bulk_command'];\n    case 'bulk_command':      return ['bulk_command'];\n    case 'multi_command':     return ['bulk_command'];\n    case 'send_notification': return ['notification'];\n    case 'delay':             return ['delay'];\n    case 'run_scene':         return ['run_scene'];\n    default:                  return ['unknown'];\n}"
         },
         "additionalInfo": {
           "description": "Phan nhanh theo loai action. Ca device_command lan bulk_command deu di qua SmartHomeBulkCommandNode.",
@@ -369,6 +370,22 @@
           "layoutX": 1800,
           "layoutY": 658
         }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsSwitchNode",
+        "name": "Scene Action Router",
+        "debugSettings": null,
+        "singletonMode": false,
+        "queueName": null,
+        "configurationVersion": 0,
+        "configuration": {
+          "jsScript": "var t = msg.type || msg.mode;\nswitch (t) {\n    case 'device_command':    return ['bulk_command'];\n    case 'bulk_command':      return ['bulk_command'];\n    case 'multi_command':     return ['bulk_command'];\n    case 'send_notification': return ['notification'];\n    case 'delay':             return ['delay'];\n    default:                  return ['unknown'];\n}"
+        },
+        "additionalInfo": {
+          "description": "Phan nhanh action tu Scene Executor (khong co run_scene — da expand). Giong Action Type Router nhung tranh cycle 5→18→5.",
+          "layoutX": 2200,
+          "layoutY": 658
+        }
       }
     ],
     "connections": [
@@ -431,6 +448,11 @@
         "fromIndex": 5,
         "toIndex": 11,
         "type": "notification"
+      },
+      {
+        "fromIndex": 5,
+        "toIndex": 18,
+        "type": "run_scene"
       },
       {
         "fromIndex": 6,
@@ -504,13 +526,28 @@
       },
       {
         "fromIndex": 18,
-        "toIndex": 5,
+        "toIndex": 19,
         "type": "Success"
       },
       {
         "fromIndex": 18,
         "toIndex": 14,
         "type": "Failure"
+      },
+      {
+        "fromIndex": 19,
+        "toIndex": 6,
+        "type": "bulk_command"
+      },
+      {
+        "fromIndex": 19,
+        "toIndex": 8,
+        "type": "delay"
+      },
+      {
+        "fromIndex": 19,
+        "toIndex": 11,
+        "type": "notification"
       }
     ],
     "ruleChainConnections": null
