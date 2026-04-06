@@ -11,38 +11,29 @@
     }
   },
   "metadata": {
-    "version": 7,
+    "version": 8,
     "firstNodeIndex": 0,
     "nodes": [
-
       {
         "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode",
         "name": "Message Type Switch",
-        "debugSettings": null,
+        "debugSettings": {
+          "failuresEnabled": false,
+          "allEnabled": false,
+          "allEnabledUntil": 1775443582884
+        },
         "singletonMode": false,
         "queueName": null,
         "configurationVersion": 0,
-        "configuration": { "version": 0 },
+        "configuration": {
+          "version": 0
+        },
         "additionalInfo": {
           "description": "Loc msg type. Chi xu ly Post telemetry / Post attributes — 2 loai co the mang telemetry cua device hoac asset.",
-          "layoutX": 200, "layoutY": 300
+          "layoutX": 400,
+          "layoutY": 478
         }
       },
-
-      {
-        "type": "org.thingsboard.rule.engine.filter.TbOriginatorTypeSwitchNode",
-        "name": "Device or Asset?",
-        "debugSettings": null,
-        "singletonMode": false,
-        "queueName": null,
-        "configurationVersion": 0,
-        "configuration": {},
-        "additionalInfo": {
-          "description": "Phan nhanh theo entity type cua originator (TB native, khong phu thuoc metadata hay msg content). Output relation = ten entity type: 'Device', 'Asset', 'Customer', ...",
-          "layoutX": 500, "layoutY": 300
-        }
-      },
-
       {
         "type": "org.thingsboard.rule.engine.metadata.TbGetOriginatorFieldsNode",
         "name": "Get Device ID",
@@ -52,7 +43,7 @@
         "configurationVersion": 1,
         "configuration": {
           "dataMapping": {
-            "id":   "originatorId",
+            "id": "originatorId",
             "name": "originatorName",
             "type": "originatorType"
           },
@@ -60,10 +51,10 @@
         },
         "additionalInfo": {
           "description": "Lay UUID chinh xac cua device vao metadata.originatorId.",
-          "layoutX": 800, "layoutY": 150
+          "layoutX": 1000,
+          "layoutY": 328
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.metadata.TbGetRelatedAttributeNode",
         "name": "Get Home Automations",
@@ -79,7 +70,9 @@
             "filters": [
               {
                 "relationType": "Contains",
-                "entityTypes": ["ASSET"]
+                "entityTypes": [
+                  "ASSET"
+                ]
               }
             ]
           },
@@ -91,10 +84,10 @@
         },
         "additionalInfo": {
           "description": "Di nguoc tu Device → Room → Home theo chieu TO. Doc server attribute 'automations' tren Home Asset vao metadata.homeAutomations.",
-          "layoutX": 1100, "layoutY": 150
+          "layoutX": 1300,
+          "layoutY": 328
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
         "name": "Has Automation Rules?",
@@ -107,10 +100,10 @@
         },
         "additionalInfo": {
           "description": "Thoat som neu khong co automation rules.",
-          "layoutX": 1400, "layoutY": 150
+          "layoutX": 1600,
+          "layoutY": 328
         }
       },
-
       {
         "type": "com.smarthome.rule.condition.SmartHomeConditionNode",
         "name": "SmartHome Condition",
@@ -126,10 +119,10 @@
         },
         "additionalInfo": {
           "description": "CUSTOM NODE. Batch query TimeseriesService.findLatest() cho tat ca device IDs trong conditions. Evaluate tung rule. Output: phat ra 1 TB message doc lap (EXECUTE_ACTION) cho MO^I action trong tat ca rules da triggered — dung ctx.enqueueForTellNext() de fan-out song song, khong can loop trong rule chain. Output: Matched / No Match / Failure.",
-          "layoutX": 1700, "layoutY": 150
+          "layoutX": 1900,
+          "layoutY": 328
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.filter.TbJsSwitchNode",
         "name": "Action Type Router",
@@ -142,10 +135,10 @@
         },
         "additionalInfo": {
           "description": "Phan nhanh theo loai action. Ca device_command lan bulk_command deu di qua SmartHomeBulkCommandNode.",
-          "layoutX": 2000, "layoutY": 150
+          "layoutX": 2200,
+          "layoutY": 328
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
         "name": "Normalize to Bulk Format",
@@ -158,10 +151,10 @@
         },
         "additionalInfo": {
           "description": "Normalize device_command (1 device) va bulk_command (nhieu devices) ve cung format truoc khi vao SmartHomeBulkCommandNode.",
-          "layoutX": 2300, "layoutY": 100
+          "layoutX": 2500,
+          "layoutY": 278
         }
       },
-
       {
         "type": "com.smarthome.rule.command.SmartHomeBulkCommandNode",
         "name": "SmartHome Bulk Command",
@@ -178,10 +171,10 @@
         },
         "additionalInfo": {
           "description": "CUSTOM NODE. Gui RPC den nhieu devices theo mode: device_list / room / home. Parallel RPC. Output: Success / Partial Success / Failure.",
-          "layoutX": 2600, "layoutY": 100
+          "layoutX": 3275,
+          "layoutY": 277
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
         "name": "Prepare Delay",
@@ -194,10 +187,10 @@
         },
         "additionalInfo": {
           "description": "Chuyen msg.seconds vao metadata.delaySeconds de TbMsgDelayNode doc duoc delay dong (useMetadataDelay=true).",
-          "layoutX": 2300, "layoutY": 300
+          "layoutX": 2500,
+          "layoutY": 478
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.delay.TbMsgDelayNode",
         "name": "Delay Action",
@@ -213,10 +206,10 @@
         },
         "additionalInfo": {
           "description": "Giu msg X giay (lay tu metadata.delaySeconds qua pattern ${delaySeconds}). Sau do chuyen toi Execute Deferred.",
-          "layoutX": 2550, "layoutY": 300
+          "layoutX": 2750,
+          "layoutY": 478
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
         "name": "Execute Deferred",
@@ -229,10 +222,10 @@
         },
         "additionalInfo": {
           "description": "Sau khi delay xong, chuyen deferred_commands thanh multi_command roi gui toi SmartHomeBulkCommandNode de thuc thi song song.",
-          "layoutX": 2800, "layoutY": 300
+          "layoutX": 3000,
+          "layoutY": 478
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
         "name": "Create Notification",
@@ -250,10 +243,10 @@
         },
         "additionalInfo": {
           "description": "Tao alarm kieu SmartHome Notification cho action send_notification. App doc alarm history de hien thi lich su.",
-          "layoutX": 2300, "layoutY": 480
+          "layoutX": 2768,
+          "layoutY": 802
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
         "name": "Build Log",
@@ -266,10 +259,10 @@
         },
         "additionalInfo": {
           "description": "Tao log entry sau khi action hoan thanh. Luu vao telemetry key automation_log.",
-          "layoutX": 2900, "layoutY": 100
+          "layoutX": 3579,
+          "layoutY": 284
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
         "name": "Save Log",
@@ -279,14 +272,16 @@
         "configurationVersion": 1,
         "configuration": {
           "defaultTTL": 2592000,
-          "processingSettings": { "type": "ON_EVERY_MESSAGE" }
+          "processingSettings": {
+            "type": "ON_EVERY_MESSAGE"
+          }
         },
         "additionalInfo": {
           "description": "Luu automation_log vao timeseries. TTL = 30 ngay.",
-          "layoutX": 3200, "layoutY": 100
+          "layoutX": 3879,
+          "layoutY": 284
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
         "name": "Build Failure Log",
@@ -299,10 +294,10 @@
         },
         "additionalInfo": {
           "description": "Tao log entry khi co loi (tu SmartHomeConditionNode Failure hoac SmartHomeBulkCommandNode Failure).",
-          "layoutX": 2900, "layoutY": 350
+          "layoutX": 3584,
+          "layoutY": 116
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
         "name": "Save Failure Log",
@@ -312,18 +307,24 @@
         "configurationVersion": 1,
         "configuration": {
           "defaultTTL": 2592000,
-          "processingSettings": { "type": "ON_EVERY_MESSAGE" }
+          "processingSettings": {
+            "type": "ON_EVERY_MESSAGE"
+          }
         },
         "additionalInfo": {
           "description": "Luu failure log vao timeseries. TTL = 30 ngay.",
-          "layoutX": 3200, "layoutY": 350
+          "layoutX": 3873,
+          "layoutY": 114
         }
       },
-
       {
         "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
         "name": "Normalize Direct Bulk Command",
-        "debugSettings": null,
+        "debugSettings": {
+          "failuresEnabled": false,
+          "allEnabled": false,
+          "allEnabledUntil": 1775442651531
+        },
         "singletonMode": false,
         "queueName": null,
         "configurationVersion": 0,
@@ -332,49 +333,132 @@
         },
         "additionalInfo": {
           "description": "Xu ly direct bulk_command tu app (qua Asset telemetry API). Unwrap msg.bulk_command roi di thang toi SmartHomeBulkCommandNode.",
-          "layoutX": 800, "layoutY": 480
+          "layoutX": 1000,
+          "layoutY": 658
         }
       }
-
     ],
     "connections": [
-
-      { "fromIndex": 0,  "toIndex": 1,  "type": "Post telemetry" },
-      { "fromIndex": 0,  "toIndex": 1,  "type": "Post attributes" },
-
-      { "fromIndex": 1,  "toIndex": 2,  "type": "Device" },
-      { "fromIndex": 1,  "toIndex": 17, "type": "Asset" },
-
-      { "fromIndex": 2,  "toIndex": 3,  "type": "Success" },
-      { "fromIndex": 3,  "toIndex": 4,  "type": "Success" },
-      { "fromIndex": 4,  "toIndex": 5,  "type": "True" },
-
-      { "fromIndex": 5,  "toIndex": 6,  "type": "Matched" },
-      { "fromIndex": 5,  "toIndex": 15, "type": "Failure" },
-
-      { "fromIndex": 6,  "toIndex": 7,  "type": "bulk_command" },
-      { "fromIndex": 6,  "toIndex": 7,  "type": "multi_command" },
-      { "fromIndex": 6,  "toIndex": 9,  "type": "delay" },
-      { "fromIndex": 6,  "toIndex": 12, "type": "notification" },
-
-      { "fromIndex": 7,  "toIndex": 8,  "type": "Success" },
-
-      { "fromIndex": 8,  "toIndex": 13, "type": "Success" },
-      { "fromIndex": 8,  "toIndex": 13, "type": "Partial Success" },
-      { "fromIndex": 8,  "toIndex": 15, "type": "Failure" },
-
-      { "fromIndex": 9,  "toIndex": 10, "type": "Success" },
-      { "fromIndex": 10, "toIndex": 11, "type": "Success" },
-      { "fromIndex": 11, "toIndex": 8,  "type": "Success" },
-
-      { "fromIndex": 12, "toIndex": 13, "type": "Created" },
-      { "fromIndex": 12, "toIndex": 13, "type": "Updated" },
-
-      { "fromIndex": 13, "toIndex": 14, "type": "Success" },
-      { "fromIndex": 15, "toIndex": 16, "type": "Success" },
-
-      { "fromIndex": 17, "toIndex": 8,  "type": "Success" }
-
+      {
+        "fromIndex": 0,
+        "toIndex": 1,
+        "type": "Post attributes"
+      },
+      {
+        "fromIndex": 0,
+        "toIndex": 1,
+        "type": "Post telemetry"
+      },
+      {
+        "fromIndex": 0,
+        "toIndex": 16,
+        "type": "Timeseries Updated"
+      },
+      {
+        "fromIndex": 1,
+        "toIndex": 2,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 2,
+        "toIndex": 3,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 3,
+        "toIndex": 4,
+        "type": "True"
+      },
+      {
+        "fromIndex": 4,
+        "toIndex": 5,
+        "type": "Matched"
+      },
+      {
+        "fromIndex": 4,
+        "toIndex": 14,
+        "type": "Failure"
+      },
+      {
+        "fromIndex": 5,
+        "toIndex": 6,
+        "type": "bulk_command"
+      },
+      {
+        "fromIndex": 5,
+        "toIndex": 6,
+        "type": "multi_command"
+      },
+      {
+        "fromIndex": 5,
+        "toIndex": 8,
+        "type": "delay"
+      },
+      {
+        "fromIndex": 5,
+        "toIndex": 11,
+        "type": "notification"
+      },
+      {
+        "fromIndex": 6,
+        "toIndex": 7,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 7,
+        "toIndex": 12,
+        "type": "Partial Success"
+      },
+      {
+        "fromIndex": 7,
+        "toIndex": 12,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 7,
+        "toIndex": 14,
+        "type": "Failure"
+      },
+      {
+        "fromIndex": 8,
+        "toIndex": 9,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 9,
+        "toIndex": 10,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 10,
+        "toIndex": 7,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 11,
+        "toIndex": 12,
+        "type": "Created"
+      },
+      {
+        "fromIndex": 11,
+        "toIndex": 12,
+        "type": "Updated"
+      },
+      {
+        "fromIndex": 12,
+        "toIndex": 13,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 14,
+        "toIndex": 15,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 16,
+        "toIndex": 7,
+        "type": "Success"
+      }
     ],
     "ruleChainConnections": null
   }
