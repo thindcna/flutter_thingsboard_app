@@ -3,5 +3,8 @@
 /mnt/d/github/thingsboard/flutter_thingsboard_app_ai/thingsboard-smarthome-nodes/src/main/java/com/smarthome/rule/condition/SmartHomeConditionConfig.java
 /mnt/d/github/thingsboard/flutter_thingsboard_app_ai/thingsboard-smarthome-nodes/src/main/java/com/smarthome/rule/command/SmartHomeBulkCommandConfig.java
 /mnt/d/github/thingsboard/flutter_thingsboard_app_ai/thingsboard-smarthome-nodes/src/main/java/com/smarthome/rule/command/SmartHomeBulkCommandNode.java
+/mnt/d/github/thingsboard/flutter_thingsboard_app_ai/thingsboard-smarthome-nodes/src/main/java/com/smarthome/rule/scene/SmartHomeSceneExecutorNode.java
+/mnt/d/github/thingsboard/flutter_thingsboard_app_ai/thingsboard-smarthome-nodes/src/main/java/com/smarthome/rule/scene/SmartHomeSceneExecutorConfig.java
+/mnt/d/github/thingsboard/flutter_thingsboard_app_ai/thingsboard-smarthome-nodes/src/main/java/com/smarthome/rule/util/ActionExecutor.java
 /mnt/d/github/thingsboard/flutter_thingsboard_app_ai/thingsboard-smarthome-nodes/src/main/java/com/smarthome/rule/util/AutomationRuleParser.java
 /mnt/d/github/thingsboard/flutter_thingsboard_app_ai/thingsboard-smarthome-nodes/src/main/java/com/smarthome/rule/util/RelationResolver.java

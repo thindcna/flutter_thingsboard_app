@@ -7,7 +7,7 @@
     "debugMode": false,
     "configuration": null,
     "additionalInfo": {
-      "description": "SmartHome automation engine. Xu ly: (1) device telemetry → SmartHomeConditionNode (multi-device batch query, fan-out 1 msg/action) → Action Type Router → SmartHomeBulkCommandNode (parallel RPC); (2) asset telemetry bulk_command → SmartHomeBulkCommandNode truc tiep tu app."
+      "description": "SmartHome automation engine. Xu ly: (1) device telemetry → SmartHomeConditionNode (multi-device batch query, fan-out 1 msg/action) → Action Type Router → SmartHomeBulkCommandNode (parallel RPC); (2) asset TIMESERIES_UPDATED → Normalize → Asset Action Switch → bulk_command/run_scene; (3) SmartHomeSceneExecutorNode cho Tap to Run scenes."
     }
   },
   "metadata": {
@@ -329,11 +329,44 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "jsScript": "// Originator cua message LA asset (Room hoac Home) ma app POST len.\n// SmartHomeBulkCommandNode se tu lay originator.id de resolve devices.\n// Chi can extract command/params/filter_type tu bulk_command.\n//\n// Ho tro 3 format POST body:\n//   1. Simple:     { bulk_command: { command, params, filter_type } }\n//   2. Timeseries: { timeseries: [{ ts, values: { bulk_command: {...} } }] }\n//   3. Array:      [{ ts, values: { bulk_command: {...} } }]\nfunction extractBulkCommand(msg) {\n    var bc;\n    if (msg.bulk_command !== undefined && msg.bulk_command !== null) {\n        bc = msg.bulk_command;\n    } else if (msg.timeseries && msg.timeseries.length > 0) {\n        var v = msg.timeseries[0].values;\n        if (v) bc = v.bulk_command;\n    } else if (Array.isArray(msg) && msg.length > 0 && msg[0].values) {\n        bc = msg[0].values.bulk_command;\n    }\n    if (bc && typeof bc === 'string') {\n        try { bc = JSON.parse(bc); } catch(e) { return null; }\n    }\n    return bc || null;\n}\n\nvar bc = extractBulkCommand(msg);\nif (!bc || !bc.command) {\n    return {msg: {noop: true, totalDevices: 0, successCount: 0, failedCount: 0, results: []}, metadata: metadata, msgType: 'BULK_COMMAND'};\n}\n// Khong can mode/room_asset_id/home_asset_id — originator IS the asset\nvar out = {\n    command:     bc.command,\n    params:      bc.params      || {},\n    filter_type: bc.filter_type || null\n};\nvar newMeta = metadata;\nnewMeta.triggerDeviceName = 'app';\nnewMeta.triggerTimestamp  = String(new Date().getTime());\nnewMeta.actionRuleId      = 'direct';\nnewMeta.actionRuleName    = 'app_direct_command';\nreturn {msg: out, metadata: newMeta, msgType: 'BULK_COMMAND'};"
+          "jsScript": "// Originator cua message LA asset (Room hoac Home) ma app POST len.\n// Ho tro 3 format POST body:\n//   1. Simple:     { bulk_command: { command, params } } or { run_scene: { scene_id } }\n//   2. Timeseries: { timeseries: [{ ts, values: { bulk_command: {...} } }] }\n//   3. Array:      [{ ts, values: { bulk_command: {...} } }]\nfunction extractKey(msg, key) {\n    var val;\n    if (msg[key] !== undefined && msg[key] !== null) {\n        val = msg[key];\n    } else if (msg.timeseries && msg.timeseries.length > 0) {\n        var v = msg.timeseries[0].values;\n        if (v) val = v[key];\n    } else if (Array.isArray(msg) && msg.length > 0 && msg[0].values) {\n        val = msg[0].values[key];\n    }\n    if (val && typeof val === 'string') {\n        try { val = JSON.parse(val); } catch(e) { return null; }\n    }\n    return val || null;\n}\n\nvar newMeta = metadata;\nnewMeta.triggerDeviceName = 'app';\nnewMeta.triggerTimestamp  = String(new Date().getTime());\nnewMeta.actionRuleId      = 'direct';\n\n// run_scene takes priority\nvar rs = extractKey(msg, 'run_scene');\nif (rs && rs.scene_id) {\n    newMeta.actionRuleName = 'app_run_scene';\n    return {msg: {type: 'run_scene', scene_id: rs.scene_id}, metadata: newMeta, msgType: 'EXECUTE_ACTION'};\n}\n\nvar bc = extractKey(msg, 'bulk_command');\nif (!bc || !bc.command) {\n    return {msg: {noop: true, totalDevices: 0, successCount: 0, failedCount: 0, results: []}, metadata: newMeta, msgType: 'BULK_COMMAND'};\n}\nnewMeta.actionRuleName = 'app_direct_command';\n// Khong can mode/room_asset_id/home_asset_id — originator IS the asset\nvar out = {\n    command:     bc.command,\n    params:      bc.params      || {},\n    filter_type: bc.filter_type || null\n};\nreturn {msg: out, metadata: newMeta, msgType: 'BULK_COMMAND'};"
         },
         "additionalInfo": {
-          "description": "Xu ly direct bulk_command tu app (qua Asset telemetry API). Unwrap msg.bulk_command roi di thang toi SmartHomeBulkCommandNode.",
+          "description": "Xu ly direct action tu app (qua Asset telemetry API). Ho tro bulk_command va run_scene. Output msg.type='run_scene' or bulk_command fields.",
           "layoutX": 1000,
+          "layoutY": 658
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsSwitchNode",
+        "name": "Asset Action Switch",
+        "debugSettings": null,
+        "singletonMode": false,
+        "queueName": null,
+        "configurationVersion": 0,
+        "configuration": {
+          "jsScript": "if (msg.type === 'run_scene') return ['run_scene'];\nif (msg.noop) return ['noop'];\nreturn ['bulk_command'];"
+        },
+        "additionalInfo": {
+          "description": "Phan nhanh: run_scene → SmartHomeSceneExecutorNode, bulk_command → SmartHomeBulkCommandNode, noop → drop.",
+          "layoutX": 1400,
+          "layoutY": 658
+        }
+      },
+      {
+        "type": "com.smarthome.rule.scene.SmartHomeSceneExecutorNode",
+        "name": "SmartHome Scene Executor",
+        "debugSettings": null,
+        "singletonMode": false,
+        "queueName": null,
+        "configurationVersion": 0,
+        "configuration": {
+          "scenesAttributeKey": "scenes",
+          "maxRecursionDepth": 3
+        },
+        "additionalInfo": {
+          "description": "CUSTOM NODE. Doc attribute 'scenes' tu Home Asset originator, tim scene by ID, expand run_scene recursively, fan-out qua ActionExecutor. Output: Success / No Scene / Failure.",
+          "layoutX": 1800,
           "layoutY": 658
         }
       }
@@ -456,8 +489,28 @@
       },
       {
         "fromIndex": 16,
-        "toIndex": 7,
+        "toIndex": 17,
         "type": "Success"
+      },
+      {
+        "fromIndex": 17,
+        "toIndex": 7,
+        "type": "bulk_command"
+      },
+      {
+        "fromIndex": 17,
+        "toIndex": 18,
+        "type": "run_scene"
+      },
+      {
+        "fromIndex": 18,
+        "toIndex": 5,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 18,
+        "toIndex": 14,
+        "type": "Failure"
       }
     ],
     "ruleChainConnections": null

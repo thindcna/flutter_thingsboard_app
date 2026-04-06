@@ -41,9 +41,29 @@ public class AutomationRuleParser {
         return MAPPER.readValue(json, new TypeReference<List<AutomationRule>>() {});
     }
 
+    /** Parse a JSON string (the value of "scenes" attribute) into a list of scenes. */
+    public static List<Scene> parseScenes(String json) throws IOException {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        return MAPPER.readValue(json, new TypeReference<List<Scene>>() {});
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Domain model
     // ─────────────────────────────────────────────────────────────────────────
+
+    @Data
+    @NoArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Scene {
+        private String id;
+        private String name;
+        private String icon;
+        private String color;
+        private boolean enabled = true;
+        private List<Action> actions;
+    }
 
     @Data
     @NoArgsConstructor
