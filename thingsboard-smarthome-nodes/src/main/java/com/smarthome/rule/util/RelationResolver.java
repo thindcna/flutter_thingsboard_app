@@ -43,6 +43,15 @@ public class RelationResolver {
     }
 
     /**
+     * Resolve all devices reachable via "Contains" relations from any asset entity.
+     * Works for both Room (flat: asset→devices) and Home (nested: asset→rooms→devices).
+     * Use this when the target asset ID comes from msg.getOriginator().
+     */
+    public ListenableFuture<List<DeviceId>> resolveDevicesFromEntity(UUID entityId) {
+        return resolveDevicesInHome(entityId);
+    }
+
+    /**
      * Resolve devices directly contained in a ROOM asset.
      */
     public ListenableFuture<List<DeviceId>> resolveDevicesInRoom(UUID roomAssetId) {

@@ -24,18 +24,22 @@ import java.util.stream.Collectors;
 /**
  * SmartHome Bulk Command Node
  *
- * Sends an RPC command to MULTIPLE devices simultaneously:
- *   - Mode "device_list": explicit list of device UUIDs
- *   - Mode "room":        all devices contained in a room asset
- *   - Mode "home":        all devices in all rooms of a home asset
+ * Sends an RPC command to MULTIPLE devices simultaneously.
  *
- * Input message body (one of three modes — see DATA_MODEL_REFERENCE.md):
+ * The target devices are resolved from the message originator (Asset entity):
+ *   - If originator is a Room Asset  → finds all devices directly in that room
+ *   - If originator is a Home Asset  → finds all devices across all rooms
+ *   No need to pass room_asset_id / home_asset_id in the message body.
+ *
+ * Special modes (set "mode" in body to override originator-based resolution):
+ *   - "device_list":   explicit list of device UUIDs in "device_ids" field
+ *   - "multi_command": per-device commands in "commands" array (used by automation engine)
+ *
+ * Minimal input body (originator-based, preferred for app direct control):
  * {
- *   "mode": "device_list",
- *   "device_ids": ["uuid-A", "uuid-B"],
- *   "command": "toggle",
- *   "params": {"power": false},
- *   "filter_type": null
+ *   "command":     "toggle",
+ *   "params":      {"power": false},
+ *   "filter_type": "light"   // optional
  * }
  *
  * Output connections:
@@ -75,11 +79,9 @@ public class SmartHomeBulkCommandNode implements TbNode {
             return;
         }
 
-        String mode = (String) body.getOrDefault("mode", "device_list");
+        String mode = (String) body.getOrDefault("mode", "");
 
-        // multi_command: list of {device_id, command, params} sent in parallel in one shot.
-        // Used by SmartHomeConditionNode to fan-out multiple device_command actions simultaneously
-        // without needing separate rule chain messages (which would be sequential per partition).
+        // multi_command: per-device commands, used by automation engine for parallel fan-out
         if ("multi_command".equals(mode)) {
             handleMultiCommand(ctx, msg, body);
             return;
@@ -110,35 +112,19 @@ public class SmartHomeBulkCommandNode implements TbNode {
 
         ListenableFuture<List<DeviceId>> devicesFuture;
 
-        switch (mode) {
-            case "device_list" -> {
-                @SuppressWarnings("unchecked")
-                List<String> rawIds = (List<String>) body.getOrDefault("device_ids", List.of());
-                List<DeviceId> deviceIds = rawIds.stream()
-                        .map(id -> new DeviceId(UUID.fromString(id)))
-                        .collect(Collectors.toList());
-                devicesFuture = Futures.immediateFuture(deviceIds);
-            }
-            case "room" -> {
-                String roomId = (String) body.get("room_asset_id");
-                if (roomId == null) {
-                    ctx.tellFailure(msg, new IllegalArgumentException("mode=room requires 'room_asset_id'"));
-                    return;
-                }
-                devicesFuture = resolver.resolveDevicesInRoom(UUID.fromString(roomId));
-            }
-            case "home" -> {
-                String homeId = (String) body.get("home_asset_id");
-                if (homeId == null) {
-                    ctx.tellFailure(msg, new IllegalArgumentException("mode=home requires 'home_asset_id'"));
-                    return;
-                }
-                devicesFuture = resolver.resolveDevicesInHome(UUID.fromString(homeId));
-            }
-            default -> {
-                ctx.tellFailure(msg, new IllegalArgumentException("Unknown mode: " + mode));
-                return;
-            }
+        if ("device_list".equals(mode)) {
+            // Explicit device list — used when targeting specific devices by UUID
+            @SuppressWarnings("unchecked")
+            List<String> rawIds = (List<String>) body.getOrDefault("device_ids", List.of());
+            List<DeviceId> deviceIds = rawIds.stream()
+                    .map(id -> new DeviceId(UUID.fromString(id)))
+                    .collect(Collectors.toList());
+            devicesFuture = Futures.immediateFuture(deviceIds);
+        } else {
+            // Default: resolve devices from the message originator (Room or Home Asset).
+            // App POSTs to /api/plugins/telemetry/ASSET/{roomOrHomeId}/timeseries/ANY
+            // → originator IS the target asset, no need to pass IDs in the body.
+            devicesFuture = resolver.resolveDevicesFromEntity(msg.getOriginator().getId());
         }
 
         final String finalCommand    = command;
@@ -148,7 +134,8 @@ public class SmartHomeBulkCommandNode implements TbNode {
             @Override
             public void onSuccess(List<DeviceId> deviceIds) {
                 if (deviceIds == null || deviceIds.isEmpty()) {
-                    ctx.tellFailure(msg, new RuntimeException("No devices resolved for mode=" + mode));
+                    ctx.tellFailure(msg, new RuntimeException(
+                            "No devices found via relations from originator " + msg.getOriginator()));
                     return;
                 }
                 sendCommandToDevices(ctx, msg, deviceIds, finalCommand, finalParamsJson);
@@ -156,7 +143,7 @@ public class SmartHomeBulkCommandNode implements TbNode {
 
             @Override
             public void onFailure(Throwable t) {
-                log.error("Failed to resolve devices for mode={}", mode, t);
+                log.error("Failed to resolve devices from originator {}", msg.getOriginator(), t);
                 ctx.tellFailure(msg, t);
             }
         }, dbExec);
