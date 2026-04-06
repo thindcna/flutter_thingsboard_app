@@ -30,17 +30,15 @@
       },
 
       {
-        "type": "org.thingsboard.rule.engine.filter.TbJsSwitchNode",
+        "type": "org.thingsboard.rule.engine.filter.TbOriginatorTypeSwitchNode",
         "name": "Device or Asset?",
         "debugSettings": null,
         "singletonMode": false,
         "queueName": null,
         "configurationVersion": 0,
-        "configuration": {
-          "jsScript": "if (metadata.originatorType === 'ASSET') {\n    if (msg.bulk_command !== undefined && msg.bulk_command !== null) {\n        return ['bulk_command'];\n    }\n    return ['asset_other'];\n}\nreturn ['device'];"
-        },
+        "configuration": {},
         "additionalInfo": {
-          "description": "Phan nhanh: device telemetry → kiem tra automation rules; asset telemetry co bulk_command → xu ly lenh truc tiep tu app.",
+          "description": "Phan nhanh theo entity type cua originator (TB native, khong phu thuoc metadata hay msg content). Output relation = ten entity type: 'Device', 'Asset', 'Customer', ...",
           "layoutX": 500, "layoutY": 300
         }
       },
@@ -330,7 +328,7 @@
         "queueName": null,
         "configurationVersion": 0,
         "configuration": {
-          "jsScript": "var bc = msg.bulk_command;\nvar out = {\n    mode:          bc.mode          || 'device_list',\n    device_ids:    bc.device_ids,\n    room_asset_id: bc.room_asset_id,\n    home_asset_id: bc.home_asset_id,\n    command:       bc.command,\n    params:        bc.params        || {},\n    filter_type:   bc.filter_type   || null\n};\nvar newMeta = metadata;\nnewMeta.triggerDeviceName = 'app';\nnewMeta.triggerDeviceId   = metadata.originatorId || 'app';\nnewMeta.triggerTimestamp  = String(new Date().getTime());\nnewMeta.actionRuleId      = 'direct';\nnewMeta.actionRuleName    = 'app_direct_command';\nreturn {msg: out, metadata: newMeta, msgType: 'BULK_COMMAND'};"
+          "jsScript": "// Extract bulk_command tu nhieu vi tri tuy theo format POST body:\n// 1. Simple:     { bulk_command: {...} }\n// 2. Timeseries: { timeseries: [{ ts, values: { bulk_command: {...} } }] }\n// 3. Array:      [{ ts, values: { bulk_command: {...} } }]\nfunction extractBulkCommand(msg) {\n    var bc;\n    if (msg.bulk_command !== undefined && msg.bulk_command !== null) {\n        bc = msg.bulk_command;\n    } else if (msg.timeseries && msg.timeseries.length > 0) {\n        var values = msg.timeseries[0].values;\n        if (values) bc = values.bulk_command;\n    } else if (Array.isArray(msg) && msg.length > 0 && msg[0].values) {\n        bc = msg[0].values.bulk_command;\n    }\n    if (bc !== undefined && bc !== null && typeof bc === 'string') {\n        try { bc = JSON.parse(bc); } catch(e) { return null; }\n    }\n    return bc || null;\n}\n\nvar bc = extractBulkCommand(msg);\nif (!bc || !bc.command) {\n    return {msg: {noop: true, totalDevices: 0, successCount: 0, failedCount: 0, results: []}, metadata: metadata, msgType: 'BULK_COMMAND'};\n}\nvar out = {\n    mode:          bc.mode          || 'device_list',\n    device_ids:    bc.device_ids    || null,\n    room_asset_id: bc.room_asset_id || null,\n    home_asset_id: bc.home_asset_id || null,\n    command:       bc.command,\n    params:        bc.params        || {},\n    filter_type:   bc.filter_type   || null\n};\nvar newMeta = metadata;\nnewMeta.triggerDeviceName = 'app';\nnewMeta.triggerDeviceId   = metadata.originatorId || 'app';\nnewMeta.triggerTimestamp  = String(new Date().getTime());\nnewMeta.actionRuleId      = 'direct';\nnewMeta.actionRuleName    = 'app_direct_command';\nreturn {msg: out, metadata: newMeta, msgType: 'BULK_COMMAND'};"
         },
         "additionalInfo": {
           "description": "Xu ly direct bulk_command tu app (qua Asset telemetry API). Unwrap msg.bulk_command roi di thang toi SmartHomeBulkCommandNode.",
@@ -344,8 +342,8 @@
       { "fromIndex": 0,  "toIndex": 1,  "type": "Post telemetry" },
       { "fromIndex": 0,  "toIndex": 1,  "type": "Post attributes" },
 
-      { "fromIndex": 1,  "toIndex": 2,  "type": "device" },
-      { "fromIndex": 1,  "toIndex": 17, "type": "bulk_command" },
+      { "fromIndex": 1,  "toIndex": 2,  "type": "Device" },
+      { "fromIndex": 1,  "toIndex": 17, "type": "Asset" },
 
       { "fromIndex": 2,  "toIndex": 3,  "type": "Success" },
       { "fromIndex": 3,  "toIndex": 4,  "type": "Success" },
